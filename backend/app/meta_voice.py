@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from typing import Awaitable, Callable
 
 import websockets
@@ -23,42 +24,35 @@ from .config import BYTES_PER_SEC, settings
 log = logging.getLogger("minutecanvas.voice")
 DEBUG_VOICE = os.environ.get("DEBUG_VOICE") == "1"
 
-_SPEAKER_KEYS = ("speaker", "speakerLabel", "speakerId", "speaker_label", "speaker_id", "speakerTag", "label")
-_TEXT_KEYS = ("transcript", "text")
-
-
-def _find(msg: dict, keys) -> object:
-    for k in keys:
-        if k in msg and msg[k] not in (None, ""):
-            return msg[k]
-    for v in msg.values():                       # one level of nesting (e.g. {"turn": {...}})
-        if isinstance(v, dict):
-            for k in keys:
-                if k in v and v[k] not in (None, ""):
-                    return v[k]
-    return None
-
-
 def parse_event(msg: dict) -> tuple[str, dict] | None:
-    """Map a Meta ASR message to ("partial"|"final"|"error"|"ignore", data)."""
+    """Map a Meta ASR message to ("partial"|"final"|"speaker"|"error"|"ignore", data).
+
+    Format confirmed by the Oct 27 test (mc_api_test.py, DIARIZATION):
+      {"type":"transcript","transcript":"...","final":?}   live partial text
+      {"type":"speaker","label":"A"}                         who is talking now (separate event)
+      {"type":"speechEnd","turnId":...}
+      {"type":"speechComplete","turnId":...,"transcript":"..."}   final text of the turn
+      {"type":"error", ...}
+    """
     t = str(msg.get("type", ""))
-    if t == "error" or (t == "" and "error" in msg):
+    turn = msg.get("turnId")
+    turn = str(turn) if turn is not None else None
+    if t == "error":
         return "error", {"message": json.dumps(msg)[:300]}
-    if t in ("speechStart", "speechEnd", "audioProgress") or "sessionId" in msg and not _find(msg, _TEXT_KEYS):
-        return "ignore", {}
-    text = _find(msg, _TEXT_KEYS)
+    if t == "speaker":
+        label = msg.get("label")
+        return ("speaker", {"label": str(label), "turn": turn}) if label not in (None, "") else ("ignore", {})
+    text = msg.get("transcript")
     if not isinstance(text, str):
         return "ignore", {}
-    speaker = _find(msg, _SPEAKER_KEYS)
-    turn = msg.get("turnId") or _find(msg, ("turnId", "turn_id"))
-    final = t in ("speechComplete", "final", "transcriptFinal", "turnComplete") or bool(
-        msg.get("isFinal") or msg.get("is_final") or msg.get("final")
-    )
-    return ("final" if final else "partial"), {
-        "text": text.strip(),
-        "speaker": str(speaker) if speaker is not None else None,
-        "turn": str(turn) if turn is not None else None,
-    }
+    if t == "speechComplete":
+        kind = "final"
+    elif t == "transcript":
+        kind = "partial"          # live text only; the turn's final text comes in speechComplete
+    else:
+        return "ignore", {}
+    sp = msg.get("speaker") or msg.get("label")
+    return kind, {"text": text.strip(), "speaker": str(sp) if sp else None, "turn": turn}
 
 
 EventCb = Callable[[str, dict], Awaitable[None]]
@@ -89,10 +83,9 @@ class VoiceStream:
     def handshake(self) -> dict:
         hs = {
             "mode": "DIARIZATION",
-            "authorization": {"accessToken": settings.meta_api_key},
+            "authorization": {"accessToken": f"Bearer {settings.meta_api_key}"},
             "audioEncoding": "PCM_24KHZ",
             "model": settings.voice_model,
-            "partialMode": "CUMULATIVE",
             "emitAudioProgress": False,
         }
         if settings.voice_language:
@@ -130,7 +123,10 @@ class VoiceStream:
         """Returns True when the session ended cleanly (rotation or stop)."""
         if settings.mock_meta:
             return await self._mock_session()
-        async with websockets.connect(settings.meta_asr_url, max_size=2**22, open_timeout=15,
+        self._speaker = None                  # labels restart with every Meta session
+        self._speaker_by_turn: dict[str, str] = {}
+        url = f"{settings.meta_asr_url}?sessionId=mc-{uuid.uuid4()}"
+        async with websockets.connect(url, max_size=2**22, open_timeout=30,
                                       ping_interval=20, ping_timeout=20) as ws:
             await ws.send(json.dumps(self.handshake(), separators=(",", ":")))
             first = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
@@ -158,7 +154,15 @@ class VoiceStream:
                     kind, data = ev
                     if kind == "error":
                         raise RuntimeError(data["message"])
-                    if kind in ("partial", "final"):
+                    if kind == "speaker":
+                        self._speaker = data["label"]
+                        if data["turn"]:
+                            self._speaker_by_turn[data["turn"]] = data["label"]
+                    elif kind in ("partial", "final"):
+                        data["speaker"] = (data["speaker"] or self._speaker_by_turn.get(data["turn"] or "")
+                                           or self._speaker)
+                        if kind == "final" and data["turn"]:
+                            self._speaker_by_turn.pop(data["turn"], None)
                         await self.on_event(kind, self._label(data))
             finally:
                 sender.cancel()

@@ -27,34 +27,71 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {settings.meta_api_key}", "Content-Type": "application/json"}
 
 
-def build_spark_request(system: str, user: str, schema_name: str, schema: dict) -> dict:
-    return {
+def build_spark_request(system: str, user: str, schema_name: str, schema: dict, extras: bool = True) -> dict:
+    """extras=False is exactly the body that passed the Oct 27 test.
+    extras=True adds reasoning_effort (faster) + strict schema; dropped automatically on HTTP 400."""
+    js = {"name": schema_name, "schema": schema if extras else plain_schema(schema)}
+    body = {
         "model": settings.spark_model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {"name": schema_name, "strict": True, "schema": schema},
-        },
-        "reasoning_effort": settings.spark_reasoning,
+        "response_format": {"type": "json_schema", "json_schema": js},
     }
+    if extras:
+        js["strict"] = True
+        if settings.spark_reasoning:
+            body["reasoning_effort"] = settings.spark_reasoning
+    return body
 
 
 def build_image_request(prompt: str) -> dict:
+    """Same body as the passing Oct 27 test (mc_api_test.py image)."""
     return {
         "model": settings.image_model,
-        "input": f"{prompt}. {IMAGE_STYLE}",
+        "input": f"{IMAGE_STYLE} {prompt}",
         "store": False,
-        "tools": [],                                  # image/web search + shell off
-        "reasoning": {"strength": settings.image_reasoning},
-        "output_format": "webp",
+        "tools": [{
+            "type": "image_generation",
+            "enable_image_search": False,
+            "enable_web_search": False,
+            "enable_shell": False,
+            "reasoning_strength": settings.image_reasoning,
+            "output_format": "webp",
+            "size": "1024x1024",
+        }],
     }
+
+
+def plain_schema(node):
+    """Tested-style schema: no nullable types (["string","null"] -> "string", null enum -> "none"),
+    no additionalProperties. The board treats "" / "none" as empty."""
+    if isinstance(node, list):
+        return [plain_schema(x) for x in node]
+    if not isinstance(node, dict):
+        return node
+    out = {}
+    for k, v in node.items():
+        if k == "additionalProperties":
+            continue
+        if k == "type" and isinstance(v, list):
+            v = next((x for x in v if x != "null"), "string")
+        elif k == "enum" and isinstance(v, list) and None in v:
+            v = [x for x in v if x is not None] + ["none"]
+        out[k] = plain_schema(v)
+    return out
 
 
 _B64_KEYS = ("b64_json", "result", "image_base64", "base64", "data", "image")
 
 
 def extract_image(payload) -> bytes | None:
-    """Find the first base64 image anywhere in the response JSON."""
+    """Tested shape: output[] item {"type":"image_generation_call","result":<base64>}.
+    Falls back to searching the whole JSON."""
+    if isinstance(payload, dict):
+        for o in payload.get("output") or []:
+            if isinstance(o, dict) and o.get("type") == "image_generation_call" and isinstance(o.get("result"), str):
+                img = _decode_b64(o["result"])
+                if img:
+                    return img
     stack = [payload]
     while stack:
         cur = stack.pop()
@@ -98,6 +135,7 @@ def image_mime(raw: bytes) -> str | None:
 class MetaClient:
     def __init__(self, http: httpx.AsyncClient | None = None):
         self.http = http or httpx.AsyncClient(timeout=httpx.Timeout(90.0, connect=10.0))
+        self.spark_extras = True     # becomes False if the API rejects reasoning_effort/strict
 
     async def aclose(self):
         await self.http.aclose()
@@ -105,11 +143,15 @@ class MetaClient:
     async def spark_json(self, system: str, user: str, schema_name: str, schema: dict) -> dict:
         if settings.mock_meta:
             return _mock_spark(user, schema_name)
-        body = build_spark_request(system, user, schema_name, schema)
         last = None
-        for attempt in range(2):
+        for attempt in range(3):
+            body = build_spark_request(system, user, schema_name, schema, self.spark_extras)
             try:
                 r = await self.http.post(f"{settings.meta_api_base}/chat/completions", headers=_headers(), json=body)
+                if r.status_code == 400 and self.spark_extras:
+                    log.warning("spark rejected reasoning_effort/strict, using the tested body: %s", r.text[:300])
+                    self.spark_extras = False
+                    continue
                 if r.status_code >= 400:
                     raise MetaAPIError(f"spark HTTP {r.status_code}: {r.text[:300]}")
                 data = r.json()

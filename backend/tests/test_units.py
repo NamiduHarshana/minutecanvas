@@ -66,10 +66,11 @@ def test_resolve_question():
     assert b.cards[qid].resolved and b.cards[qid].answer == "Client hosts it"
 
 
-def test_parse_event_variants():
-    assert parse_event({"type": "speechComplete", "turnId": "3", "speaker": "B", "transcript": "hi"})[0] == "final"
-    k, d = parse_event({"type": "transcript", "turnId": "3", "speakerLabel": "C", "transcript": "h"})
-    assert k == "partial" and d["speaker"] == "C"
+def test_parse_event_real_format():
+    assert parse_event({"type": "speechComplete", "turnId": "3", "transcript": "hi"})[0] == "final"
+    assert parse_event({"type": "transcript", "transcript": "h"})[0] == "partial"
+    assert parse_event({"type": "transcript", "final": True, "transcript": "h"})[0] == "partial"   # no double final
+    assert parse_event({"type": "speaker", "label": "C"}) == ("speaker", {"label": "C", "turn": None})
     assert parse_event({"type": "error", "message": "x"})[0] == "error"
     assert parse_event({"type": "speechStart", "turnId": "1"})[0] == "ignore"
 

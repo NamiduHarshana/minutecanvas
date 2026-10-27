@@ -37,6 +37,8 @@ class FakeASR:
         await self.server.wait_closed()
 
     async def _handler(self, ws):
+        self.paths = getattr(self, "paths", [])
+        self.paths.append(ws.request.path)
         hs = json.loads(await ws.recv())
         self.handshakes.append(hs)
         self.sessions += 1
@@ -49,7 +51,7 @@ class FakeASR:
             async for msg in ws:
                 if isinstance(msg, str):
                     if json.loads(msg).get("type") == "endStream":
-                        await ws.send(json.dumps({"type": "speechComplete", "turnId": "end", "speaker": "A",
+                        await ws.send(json.dumps({"type": "speechComplete", "turnId": "end",
                                                   "transcript": "Final words before the end."}))
                         await ws.close(1000)
                         return
@@ -66,9 +68,13 @@ class FakeASR:
                     next_emit += self.emit_every * BPS
                     turn += 1
                     sp = "A" if turn % 2 else "B"
-                    await ws.send(json.dumps({"type": "transcript", "turnId": str(turn), "speaker": sp,
-                                              "transcript": "We need to ship the"}))
-                    await ws.send(json.dumps({"type": "speechComplete", "turnId": str(turn), "speaker": sp,
+                    # real format (Oct 27 test): speaker is a separate event, finals have no speaker field
+                    await ws.send(json.dumps({"type": "speaker", "label": sp}))
+                    await ws.send(json.dumps({"type": "speechStart", "turnId": str(turn)}))
+                    await ws.send(json.dumps({"type": "transcript", "transcript": "We need to ship the"}))
+                    await ws.send(json.dumps({"type": "transcript", "final": True, "transcript": "We need to ship the login"}))
+                    await ws.send(json.dumps({"type": "speechEnd", "turnId": str(turn)}))
+                    await ws.send(json.dumps({"type": "speechComplete", "turnId": str(turn),
                                               "transcript": f"<b>Line {turn}</b>: we decided to ship the login API by Friday and Kasun will send docs."}))
         finally:
             self.closed_codes.append(ws.close_code or 0)
@@ -77,10 +83,12 @@ class FakeASR:
 WEBP_1PX = base64.b64decode("UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=")
 
 
-def fake_http(spark_calls: list, image_calls: list) -> httpx.AsyncClient:
+def fake_http(spark_calls: list, image_calls: list, reject_extras: bool = True) -> httpx.AsyncClient:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         if request.url.path.endswith("/chat/completions"):
+            if reject_extras and "reasoning_effort" in body:     # simulate Meta not accepting the extras
+                return httpx.Response(400, json={"error": "unknown parameter reasoning_effort"})
             spark_calls.append(body)
             name = body["response_format"]["json_schema"]["name"]
             if name == "summary":
@@ -99,6 +107,7 @@ def fake_http(spark_calls: list, image_calls: list) -> httpx.AsyncClient:
             return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(content)}}]})
         if request.url.path.endswith("/responses"):
             image_calls.append(body)
+            assert body["tools"][0]["type"] == "image_generation" and body["tools"][0]["output_format"] == "webp"
             return httpx.Response(200, json={"output": [{"type": "image_generation_call",
                                                          "result": base64.b64encode(WEBP_1PX * 20).decode()}]})
         return httpx.Response(404)

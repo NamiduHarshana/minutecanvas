@@ -7,7 +7,7 @@ Return ONLY the changes to the board as JSON.
 Columns:
 - goals: what the group wants to achieve (outcomes, targets, the purpose of the work).
 - decisions: things the group agreed or decided.
-- actions: a task someone will do. owner = the person who will do it (use the speaker name), due = deadline exactly as said (e.g. "Friday"), else null.
+- actions: a task someone will do. owner = the person who will do it (use the speaker name), due = deadline exactly as said (e.g. "Friday"). Unknown owner/due/status: null (or "" / "none" if null is not allowed).
 - updates: progress reported on existing work. status = done | in_progress | blocked.
 - questions: open questions raised but not answered yet.
 

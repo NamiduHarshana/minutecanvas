@@ -142,6 +142,12 @@ async def test_full_meeting_with_drop_and_resend(server):
     assert asr.sessions == 1
     hs = asr.handshakes[0]
     assert hs["mode"] == "DIARIZATION" and hs["audioEncoding"] == "PCM_24KHZ" and hs["keywords"] == ["Claude", "MinuteCanvas"]
+    assert hs["authorization"]["accessToken"] == "Bearer test-key"
+    assert asr.paths[0].startswith("/?sessionId=mc-")
+    # speaker labels come from separate "speaker" events
+    assert {f["speaker"] for f in b.of("transcript_final")} >= {"A", "B"}
+    # spark fell back to the tested body after HTTP 400
+    assert "reasoning_effort" not in server["spark"][0] and "strict" not in server["spark"][0]["response_format"]["json_schema"]
 
     finals = b.of("transcript_final")
     assert finals and all("<" not in f["text"] for f in finals)          # sanitised
