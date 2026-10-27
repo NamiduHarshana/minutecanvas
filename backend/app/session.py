@@ -328,6 +328,7 @@ class Session:
     async def _build_report(self) -> dict:
         cards = [self.board.cards[i] for i in self.board.order if i in self.board.cards]
         summary = {"title": self.board.title or "Meeting notes", "summary": "", "image_prompt": ""}
+        takeaways: list[str] = []
         if self.transcript:
             full = [self._line(x) for x in self.transcript]
             if len(full) > 600:     # keep the request small for very long meetings
@@ -337,7 +338,11 @@ class Session:
                     SUMMARY_SYSTEM,
                     json.dumps({"board": self.board.for_spark(), "transcript": full}, ensure_ascii=False),
                     "summary", SUMMARY_SCHEMA)
-                summary["title"] = clean_text(out.get("title"), 80) or summary["title"]
+                # keep the title the board showed all meeting; the summary title is only a fallback
+                if not self.board.title:
+                    summary["title"] = clean_text(out.get("title"), 80) or summary["title"]
+                raw = out.get("takeaways") if isinstance(out.get("takeaways"), list) else []
+                takeaways = [t for t in (clean_text(x, 160) for x in raw[:5]) if t]
                 summary["summary"] = clean_text(out.get("summary"), 1200)
                 summary["image_prompt"] = clean_text(out.get("image_prompt"), 300)
             except Exception as e:  # noqa: BLE001
@@ -353,6 +358,7 @@ class Session:
             "date": self.created_wall.isoformat(),
             "duration_s": round(self.meeting_t),
             "summary": summary["summary"],
+            "takeaways": takeaways,
             "cover_image_url": cover,
             "speakers": {k: self.speaker_name(k) for k in sorted({x["speaker"] for x in self.transcript})},
             "goals": [pub(c) for c in cards if c.column == "goals"],
@@ -361,6 +367,7 @@ class Session:
             "decisions": [pub(c) for c in cards if c.column == "decisions"],
             "actions": [pub(c) for c in cards if c.column == "actions"],
             "open_questions": [pub(c) for c in cards if c.column == "questions" and not c.resolved],
+            "answered_questions": [pub(c) for c in cards if c.column == "questions" and c.resolved],
         }
 
     async def close(self):

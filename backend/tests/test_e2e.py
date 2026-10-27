@@ -166,7 +166,9 @@ async def test_full_meeting_with_drop_and_resend(server):
     assert last_user["current_board"]
 
     rep = b.of("report_ready")[0]["report"]
-    assert rep["title"] == "Client Sync" and rep["summary"]
+    assert rep["title"] == "Client Sync" and rep["summary"]   # board title wins over the summary title
+    assert rep["takeaways"] == ["Login ships Friday", "Payment is blocked"]   # sanitised
+    assert "answered_questions" in rep
     assert rep["updates"][0]["status"] == "blocked"
     assert rep["cover_image_url"]
 

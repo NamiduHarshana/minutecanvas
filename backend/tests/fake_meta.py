@@ -98,7 +98,8 @@ def fake_http(spark_calls: list, image_calls: list, reject_extras: bool = True) 
             spark_calls.append(body)
             name = body["response_format"]["json_schema"]["name"]
             if name == "summary":
-                content = {"title": "Client Sync", "summary": "We agreed to ship login.", "image_prompt": "a rocket"}
+                content = {"title": "Other Title", "summary": "We agreed to ship login.",
+                           "takeaways": ["Login ships Friday", "<b>Payment</b> is blocked"], "image_prompt": "a rocket"}
             else:
                 n = len(spark_calls)
                 content = {

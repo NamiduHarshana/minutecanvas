@@ -194,7 +194,10 @@ _MOCK_CARDS = [
 
 def _mock_spark(user: str, schema_name: str) -> dict:
     if schema_name == "summary":
-        return {"title": "Mock Client Sync", "summary": "Mock summary of the meeting.", "image_prompt": "team around a table"}
+        return {"title": "Mock Client Sync", "summary": "Mock summary of the meeting.",
+                "takeaways": ["Stripe is the payment provider", "Login API is blocked on the client's keys",
+                              "API docs go to the client by Friday"],
+                "image_prompt": "team around a table"}
     col, title, owner, due, status = random.choice(_MOCK_CARDS)
     return {
         "new_cards": [{"column": col, "title": f"{title} #{random.randint(1, 999)}", "detail": "Mock card from MOCK_META mode.",
