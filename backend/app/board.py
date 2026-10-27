@@ -45,6 +45,20 @@ class Card:
         return d
 
 
+def _parse_t(v, now_t: float) -> float:
+    """"01:23" / "1:02:03" -> seconds; falls back to now if missing or in the future."""
+    if isinstance(v, str):
+        try:
+            sec = 0.0
+            for part in v.strip().strip("[]").split(":"):
+                sec = sec * 60 + float(part)
+            if 0 <= sec <= now_t + 1:
+                return sec
+        except ValueError:
+            pass
+    return now_t
+
+
 def _norm(s: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", s.lower()) if len(w) > 2}
 
@@ -153,7 +167,7 @@ class Board:
                 owner=clean_optional(n.get("owner"), OWNER_MAX),
                 due=clean_optional(n.get("due"), DUE_MAX),
                 status=status,
-                t=round(now_t, 1),
+                t=round(_parse_t(n.get("said_at"), now_t), 1),
                 image_prompt=clean_text(n.get("image_prompt"), PROMPT_MAX) or title,
             )
             self.cards[c.id] = c

@@ -72,7 +72,8 @@ def test_parse_event_real_format():
     assert parse_event({"type": "transcript", "final": True, "transcript": "h"})[0] == "partial"   # no double final
     assert parse_event({"type": "speaker", "label": "C"}) == ("speaker", {"label": "C", "turn": None})
     assert parse_event({"type": "error", "message": "x"})[0] == "error"
-    assert parse_event({"type": "speechStart", "turnId": "1"})[0] == "ignore"
+    assert parse_event({"type": "speechStart", "turnId": 1}) == ("turn_start", {"turn": "1"})
+    assert parse_event({"type": "speechEnd", "turnId": 1})[0] == "ignore"
 
 
 def test_extract_image_nested():
@@ -88,3 +89,13 @@ def test_client_ip_not_spoofable():
     assert client_ip({"x-forwarded-for": "1.2.3.4, 203.0.113.9"}, "10.0.0.1", 1) == "203.0.113.9"
     assert client_ip({}, "10.0.0.1", 1) == "10.0.0.1"
     assert client_ip({"x-forwarded-for": "1.2.3.4"}, "10.0.0.1", 0) == "10.0.0.1"
+
+
+def test_card_time_from_said_at_and_owner_rename():
+    b = Board()
+    ch = b.apply_spark({"new_cards": [{"column": "actions", "title": "Email client", "detail": "", "owner": "Speaker C",
+                                       "due": "today", "status": None, "said_at": "00:39", "image_prompt": ""}]}, 45.9)
+    assert ch.added[0].t == 39.0
+    ch = b.apply_spark({"new_cards": [{"column": "goals", "title": "Finish tracking", "detail": "", "owner": None,
+                                       "due": None, "status": None, "said_at": "99:00", "image_prompt": ""}]}, 45.9)
+    assert ch.added[0].t == 45.9          # future timestamp ignored

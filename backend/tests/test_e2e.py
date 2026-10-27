@@ -150,6 +150,11 @@ async def test_full_meeting_with_drop_and_resend(server):
     assert "reasoning_effort" not in server["spark"][0] and "strict" not in server["spark"][0]["response_format"]["json_schema"]
 
     finals = b.of("transcript_final")
+    # no duplicate line on Stop, and the last turn keeps its own speaker
+    assert sum(1 for f in finals if f["text"].startswith("Final words")) == 1
+    assert [f for f in finals if f["text"].startswith("Final words")][0]["speaker"] == "B"
+    # live partials have no speaker yet (label arrives at the end of the turn)
+    assert all(p["speaker"] is None for p in b.of("transcript_partial"))
     assert finals and all("<" not in f["text"] for f in finals)          # sanitised
     added = [c for e in b.of("cards_added") for c in e["cards"]]
     assert "<" not in json.dumps(added)

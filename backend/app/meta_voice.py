@@ -39,6 +39,8 @@ def parse_event(msg: dict) -> tuple[str, dict] | None:
     turn = str(turn) if turn is not None else None
     if t == "error":
         return "error", {"message": json.dumps(msg)[:300]}
+    if t == "speechStart":
+        return "turn_start", {"turn": turn}
     if t == "speaker":
         label = msg.get("label")
         return ("speaker", {"label": str(label), "turn": turn}) if label not in (None, "") else ("ignore", {})
@@ -125,6 +127,7 @@ class VoiceStream:
             return await self._mock_session()
         self._speaker = None                  # labels restart with every Meta session
         self._speaker_by_turn: dict[str, str] = {}
+        self._turn = None                     # partials carry no turnId: take it from speechStart
         url = f"{settings.meta_asr_url}?sessionId=mc-{uuid.uuid4()}"
         async with websockets.connect(url, max_size=2**22, open_timeout=30,
                                       ping_interval=20, ping_timeout=20) as ws:
@@ -154,13 +157,20 @@ class VoiceStream:
                     kind, data = ev
                     if kind == "error":
                         raise RuntimeError(data["message"])
-                    if kind == "speaker":
+                    if kind == "turn_start":
+                        self._turn = data["turn"]
+                    elif kind == "speaker":
+                        # Meta sends the label at the END of a turn (just before speechComplete)
                         self._speaker = data["label"]
                         if data["turn"]:
                             self._speaker_by_turn[data["turn"]] = data["label"]
                     elif kind in ("partial", "final"):
-                        data["speaker"] = (data["speaker"] or self._speaker_by_turn.get(data["turn"] or "")
-                                           or self._speaker)
+                        data["turn"] = data["turn"] or self._turn
+                        if kind == "partial":
+                            data["speaker"] = None        # not known yet while the person is talking
+                        else:
+                            data["speaker"] = (data["speaker"] or self._speaker_by_turn.get(data["turn"] or "")
+                                               or self._speaker)
                         if kind == "final" and data["turn"]:
                             self._speaker_by_turn.pop(data["turn"], None)
                         await self.on_event(kind, self._label(data))

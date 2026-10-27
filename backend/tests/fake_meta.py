@@ -51,8 +51,13 @@ class FakeASR:
             async for msg in ws:
                 if isinstance(msg, str):
                     if json.loads(msg).get("type") == "endStream":
-                        await ws.send(json.dumps({"type": "speechComplete", "turnId": "end",
+                        # last turn: partial arrives, then the final (real run duplicated it on Stop before the fix)
+                        await ws.send(json.dumps({"type": "speechStart", "turnId": 999}))
+                        await ws.send(json.dumps({"type": "transcript", "transcript": " Final words", "final": False}))
+                        await ws.send(json.dumps({"type": "speaker", "label": "B"}))
+                        await ws.send(json.dumps({"type": "speechComplete", "turnId": 999,
                                                   "transcript": "Final words before the end."}))
+                        await ws.send(json.dumps({"type": "transcript", "transcript": "", "final": True}))
                         await ws.close(1000)
                         return
                     continue
@@ -69,12 +74,13 @@ class FakeASR:
                     turn += 1
                     sp = "A" if turn % 2 else "B"
                     # real format (Oct 27 test): speaker is a separate event, finals have no speaker field
+                    # order seen in the real Oct 27 run: speechStart(turnId) -> partials (no turnId)
+                    # -> speaker label -> speechEnd -> speechComplete
+                    await ws.send(json.dumps({"type": "speechStart", "turnId": turn}))
+                    await ws.send(json.dumps({"type": "transcript", "transcript": " We need to ship the", "final": False}))
                     await ws.send(json.dumps({"type": "speaker", "label": sp}))
-                    await ws.send(json.dumps({"type": "speechStart", "turnId": str(turn)}))
-                    await ws.send(json.dumps({"type": "transcript", "transcript": "We need to ship the"}))
-                    await ws.send(json.dumps({"type": "transcript", "final": True, "transcript": "We need to ship the login"}))
-                    await ws.send(json.dumps({"type": "speechEnd", "turnId": str(turn)}))
-                    await ws.send(json.dumps({"type": "speechComplete", "turnId": str(turn),
+                    await ws.send(json.dumps({"type": "speechEnd", "turnId": turn}))
+                    await ws.send(json.dumps({"type": "speechComplete", "turnId": turn,
                                               "transcript": f"<b>Line {turn}</b>: we decided to ship the login API by Friday and Kasun will send docs."}))
         finally:
             self.closed_codes.append(ws.close_code or 0)

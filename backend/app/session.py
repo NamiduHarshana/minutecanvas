@@ -182,15 +182,18 @@ class Session:
         if kind == "partial":
             if not data.get("text"):
                 return
-            p = {"turn": turn, "speaker": data.get("speaker") or self._last_speaker(), "text": data["text"]}
+            p = {"turn": turn, "speaker": data.get("speaker"), "text": data["text"]}   # speaker None = "speaking…"
             self.partials[turn] = p
             await self.send({"type": "transcript_partial", **p})
         elif kind == "final":
-            self.partials.pop(turn, None)
+            # Meta partials have no turnId (key "<gen>-live") but finals do, so a final
+            # clears both; otherwise Stop re-adds the old partial as a duplicate line.
+            gen = turn.split("-", 1)[0]
+            for key in {turn, f"{gen}-live"}:
+                if self.partials.pop(key, None) is not None:
+                    await self.send({"type": "transcript_partial_clear", "turn": key})
             if data.get("text"):
                 await self._add_final(data)
-            else:
-                await self.send({"type": "transcript_partial_clear", "turn": turn})
 
     def _last_speaker(self) -> str:
         return self.transcript[-1]["speaker"] if self.transcript else "A"
@@ -216,11 +219,18 @@ class Session:
             return
         if name and label not in self.speaker_names and len(self.speaker_names) >= 50:
             return
+        old_display = self.speaker_name(label)
         if name:
             self.speaker_names[label] = name
         else:
             self.speaker_names.pop(label, None)
+        new_display = self.speaker_name(label)
+        changed = [c for c in self.board.cards.values() if c.owner and c.owner == old_display]
+        for c in changed:
+            c.owner = new_display
         await self.send({"type": "speakers", "speakers": self.speaker_names})
+        if changed:
+            await self.send({"type": "cards_updated", "cards": [c.public() for c in changed]})
 
     # ---------------- Spark ----------------
     async def _spark_loop(self):
