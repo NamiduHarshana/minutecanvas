@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { LoaderCircle, Mic, MonitorSpeaker, PanelRightOpen, X } from "lucide-react";
 import type { AudioSource, Card, ClientMsg } from "@/core/types";
 import { AudioCapture, CaptureError, tabAudioSupported } from "@/core/audio";
-import { ApiError, MeetingClient, StoredSession, clearStored, createSession, loadStored } from "@/core/client";
+import { ApiError, MeetingClient, StoredSession, checkStored, clearStored, createSession, loadStored } from "@/core/client";
 import { initialState, orderedCards, reducer } from "@/core/store";
 import { preloadImages, setImageFetcher } from "@/core/images";
 import { exportPng, exportSinglePdf, nextFrames, safeName } from "@/core/export";
@@ -51,7 +51,18 @@ export default function App() {
   const live = state.serverState === "recording" || state.serverState === "paused";
   const readOnly = state.serverState === "done";
 
-  useEffect(() => setStored(loadStored()), []);
+  // offer "Rejoin" only if the server still has this tab's meeting
+  useEffect(() => {
+    const s = loadStored();
+    if (!s) return;
+    let cancelled = false;
+    checkStored(s).then((ok) => {
+      if (!cancelled) setStored(ok ? s : null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // ---------------- wiring ----------------
   const attachAudio = useCallback((audio: AudioCapture, client: MeetingClient) => {
@@ -67,6 +78,8 @@ export default function App() {
     client.onConn = (conn) => dispatch({ type: "conn", conn });
     client.onFatal = (message) => {
       audioRef.current?.close();
+      clearStored(); // the server no longer has this meeting
+      setStored(null);
       setFatal(message);
     };
     setImageFetcher((p) => client.fetchBlob(p));

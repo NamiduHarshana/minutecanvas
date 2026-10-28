@@ -66,6 +66,20 @@ function saveStored(s: StoredSession) {
     /* private mode: refresh-rejoin just won't work */
   }
 }
+/** Is the stored meeting still on the server? Clears it when the server says it's gone. */
+export async function checkStored(s: StoredSession): Promise<boolean> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/sessions/${encodeURIComponent(s.sid)}`, {
+      headers: { Authorization: `Bearer ${s.token}` },
+      cache: "no-store",
+    });
+    if (res.status === 404) clearStored();
+    return res.ok;
+  } catch {
+    return false; // server unreachable: don't offer a rejoin that can't work
+  }
+}
+
 export function clearStored() {
   try {
     sessionStorage.removeItem(STORE_KEY);

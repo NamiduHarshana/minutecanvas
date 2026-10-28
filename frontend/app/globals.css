@@ -467,16 +467,16 @@ h1, h2, h3, h4, p { margin: 0; }
 .cover-art-empty { height: 100%; display: grid; place-items: center; opacity: 0.6; }
 
 /* key takeaways */
-.take-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 44px; }
-.take-main { display: flex; flex-direction: column; gap: 22px; min-height: 0; overflow: hidden; }
-.take-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 22px; }
-.take-list li { display: flex; gap: 18px; align-items: flex-start; font-size: 27px; line-height: 1.35; font-weight: 550; color: var(--text); }
+.take-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 360px; grid-template-rows: minmax(0, 1fr); gap: 44px; }
+/* --take-fs is stepped down by TakeawaysSlide until everything fits (no cut-off summary) */
+.take-main { --take-fs: 27px; display: flex; flex-direction: column; gap: calc(var(--take-fs) * 0.8); min-height: 0; overflow: hidden; }
+.take-list { list-style: none; margin: 0; padding: 0; display: grid; gap: calc(var(--take-fs) * 0.75); }
+.take-list li { display: flex; gap: 18px; align-items: flex-start; font-size: var(--take-fs); line-height: 1.35; font-weight: 550; color: var(--text); }
 .take-num {
-  flex-shrink: 0; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%;
-  background: var(--brand); color: #fff; font-size: 18px; font-weight: 750; margin-top: 0;
+  flex-shrink: 0; display: grid; place-items: center; width: calc(var(--take-fs) * 1.33); height: calc(var(--take-fs) * 1.33); border-radius: 50%;
+  background: var(--brand); color: #fff; font-size: calc(var(--take-fs) * 0.67); font-weight: 750;
 }
-.take-summary { font-size: 18px; line-height: 1.55; color: var(--muted); border-top: 1px solid var(--border); padding-top: 18px;
-  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.take-summary { font-size: max(16px, calc(var(--take-fs) * 0.67)); line-height: 1.55; color: var(--muted); border-top: 1px solid var(--border); padding-top: 18px; }
 .summary-text { font-size: 25px; line-height: 1.5; color: var(--text-2); }
 .take-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start; }
 .take-stats .stat:last-child { grid-column: span 2; }

@@ -97,6 +97,17 @@ async def test_security(server):
     assert ws.close_code == 4401
 
 
+async def test_rejoin_check(server):
+    r = (await create(server)).json()
+    url = f"{server['http']}/api/sessions/{r['session_id']}"
+    async with httpx.AsyncClient() as c:
+        ok = await c.get(url, headers={"Authorization": f"Bearer {r['token']}"})
+        assert ok.status_code == 200 and ok.json()["state"] == "created"
+        assert (await c.get(url, headers={"Authorization": "Bearer nope"})).status_code == 404
+        assert (await c.get(f"{server['http']}/api/sessions/gone",
+                            headers={"Authorization": f"Bearer {r['token']}"})).status_code == 404
+
+
 async def test_full_meeting_with_drop_and_resend(server):
     r = (await create(server)).json()
     b = Browser(server["ws"], r["session_id"], r["token"])

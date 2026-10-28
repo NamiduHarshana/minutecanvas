@@ -1,4 +1,5 @@
 "use client";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CalendarDays, Check, CircleCheckBig, Clock, ListChecks, Users } from "lucide-react";
 import type { Card, Column, Report } from "@/core/types";
 import { COLUMNS, COLUMN_META } from "@/core/types";
@@ -37,10 +38,10 @@ export function allCards(r: Report): Card[] {
   return [...r.goals, ...r.decisions, ...r.actions, ...r.updates, ...r.open_questions, ...(r.answered_questions || [])];
 }
 
-/** Cover → Key takeaways → Timeline → Goals → Team updates → Decisions → Next steps → Open questions → Answered. Empty sections are skipped. */
+/** Cover → Key takeaways → Timeline (3+ items) → Goals → Team updates → Decisions → Next steps → Open questions → Answered. Empty sections are skipped. */
 export function buildSlides(r: Report): Slide[] {
   const out: Slide[] = [{ kind: "cover" }, { kind: "takeaways" }];
-  if (allCards(r).length) out.push({ kind: "timeline" });
+  if (allCards(r).length >= 3) out.push({ kind: "timeline" }); // 1–2 dots on an empty chart says nothing
   const grid = (column: Column, title: string, cards: Card[]) => {
     // balanced pages: 8 cards → 4 + 4, not 6 + 2
     const n = Math.ceil(cards.length / GRID_PER_PAGE);
@@ -142,8 +143,32 @@ function CoverSlide({ report }: { report: Report }) {
 }
 
 // ---------------------------------------------------------------- takeaways
+const TAKE_FS = [27, 24, 21, 19, 17];
+
 function TakeawaysSlide({ report }: { report: Report }) {
   const take = report.takeaways || [];
+  // step the text size down until the takeaways + summary fit the slide (never cut off)
+  const mainRef = useRef<HTMLDivElement>(null);
+  const [fs, setFs] = useState(0);
+  const [pass, setPass] = useState(0);
+  const textKey = take.join("\n") + "\n" + (report.summary || "");
+  useLayoutEffect(() => setFs(0), [textKey]);
+  useLayoutEffect(() => {
+    const el = mainRef.current;
+    if (el && el.scrollHeight > el.clientHeight + 1 && fs < TAKE_FS.length - 1) setFs(fs + 1);
+  }, [fs, textKey, pass]);
+  useEffect(() => {
+    let alive = true;
+    // re-measure once web fonts are in (they change line breaks)
+    document.fonts?.ready.then(() => {
+      if (!alive) return;
+      setFs(0);
+      setPass((p) => p + 1);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const answered = report.answered_questions?.length || 0;
   const stats: [Column, string, number][] = [
     ["goals", "Goals", report.goals.length],
@@ -156,7 +181,7 @@ function TakeawaysSlide({ report }: { report: Report }) {
     <div className="slide">
       <SlideHead title="Key takeaways" />
       <div className="take-body">
-        <div className="take-main">
+        <div className="take-main" ref={mainRef} style={{ "--take-fs": `${TAKE_FS[fs]}px` } as React.CSSProperties}>
           {take.length ? (
             <>
               <ol className="take-list">

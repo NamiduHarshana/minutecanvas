@@ -102,6 +102,13 @@ def _authed_session(sid: str, request: Request):
     return s
 
 
+@app.get("/api/sessions/{sid}")
+async def get_session(sid: str, request: Request):
+    """Rejoin check. Needs Authorization: Bearer <token>; 404 if the session is gone."""
+    s = _authed_session(sid, request)
+    return {"state": s.state}
+
+
 @app.get("/api/sessions/{sid}/images/{img_id}")
 async def get_image(sid: str, img_id: str, request: Request):
     """Needs Authorization: Bearer <token>. Frontend: fetch -> blob -> URL.createObjectURL."""
