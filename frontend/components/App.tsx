@@ -350,6 +350,10 @@ export default function App() {
             setModal(null);
             focusFlow("gap", gapId);
           }}
+          onShowConflict={(id) => {
+            setModal(null);
+            focusFlow("conflict", id);
+          }}
         />
       )}
 

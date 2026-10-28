@@ -66,10 +66,13 @@ class Settings:
     # Per-session caps (protect credits)
     max_session_minutes: int = field(default_factory=lambda: _int("MAX_SESSION_MINUTES", 180))
     max_spark_calls: int = field(default_factory=lambda: _int("MAX_SPARK_CALLS", 150))
-    max_images: int = field(default_factory=lambda: _int("MAX_IMAGES", 40))
+    max_images: int = field(default_factory=lambda: _int("MAX_IMAGES", 80))
     max_flow_calls: int = field(default_factory=lambda: _int("MAX_FLOW_CALLS", 150))   # Flow agent rounds
     flow_enabled: bool = field(default_factory=lambda: _env("FLOW_ENABLED", "1") != "0")
     gap_review_cooldown_s: float = field(default_factory=lambda: _float("GAP_REVIEW_COOLDOWN_S", 30.0))
+    # automatic gap check during the meeting (live rounds only see ~45 s, so gaps need a wider look); 0 = off
+    auto_gap_check_s: float = field(default_factory=lambda: _float("AUTO_GAP_CHECK_S", 240.0))
+    auto_gap_min_steps: int = field(default_factory=lambda: _int("AUTO_GAP_MIN_STEPS", 3))
     image_concurrency: int = field(default_factory=lambda: _int("IMAGE_CONCURRENCY", 2))
     session_ttl_minutes: int = field(default_factory=lambda: _int("SESSION_TTL_MINUTES", 240))
 
@@ -84,6 +87,10 @@ class Settings:
     pacer_lead_s: float = field(default_factory=lambda: _float("PACER_LEAD_S", 0.5))
     pacer_grace_s: float = field(default_factory=lambda: _float("PACER_GRACE_S", 0.3))
     max_backlog_s: float = field(default_factory=lambda: _float("MAX_BACKLOG_S", 60.0))
+
+    # DEBUG_DUMP=1 (local testing only): writes transcript + every Spark call to backend/debug/<session>.json
+    debug_dump: bool = field(default_factory=lambda: _env("DEBUG_DUMP") == "1")
+    debug_dir: str = field(default_factory=lambda: _env("DEBUG_DIR", "debug"))
 
     @property
     def mock_meta(self) -> bool:

@@ -6,6 +6,7 @@ slightly wrong quote on purpose, so the reject -> fix retry path is visible in m
 from __future__ import annotations
 
 import json
+import os
 import re
 
 # (speaker, text) — A = client, B = developer
@@ -26,12 +27,30 @@ MOCK_LINES: list[tuple[str, str]] = [
     ("A", "If the payment fails we just show an error and let them try again."),
 ]
 
+# MOCK_LONG=1: a long journey after the sofa script (30+ steps) to test how a big Flow Map stays readable
+_LONG_SCREENS = ["delivery address", "delivery slot", "gift note", "coupon", "order summary", "invoice email",
+                 "order tracking", "driver assigned", "out for delivery", "delivered photo", "rating", "review",
+                 "return request", "return pickup", "refund status", "loyalty points", "wishlist", "saved cards",
+                 "support chat", "FAQ", "profile", "notification settings", "referral", "account delete"]
+if os.environ.get("MOCK_LONG") == "1":
+    MOCK_LINES = MOCK_LINES + [("A" if i % 2 else "B", f"Next the customer goes to the {x} screen and continues.")
+                               for i, x in enumerate(_LONG_SCREENS)]
+
 
 def _calls_for_line(text: str, flow: dict) -> list[tuple[str, dict]]:
     t = text.lower()
     bugs = {b["text"].lower(): b["id"] for b in flow.get("open_bugs", [])}
     gaps = {g["question"].lower(): g["id"] for g in flow.get("gaps", []) if not g.get("resolved")}
     out: list[tuple[str, dict]] = []
+    m = re.search(r"next the customer goes to the (.+) screen", t)
+    if m:
+        steps = flow.get("steps", [])
+        label = m.group(1).title()[:30]
+        args = {"label": label, "kind": "step", "quote": f"the customer goes to the {m.group(1)} screen"}
+        if steps:
+            args["after"] = steps[-1]["id"]
+        flow.setdefault("steps", []).append({"id": label, "label": label, "kind": "step"})   # chain within one batch
+        return [("add_step", args)]
     if "home screen with categories" in t:
         out.append(("add_step", {"label": "Home screen", "kind": "start",
                                  "quote": "lands on the home screen with categories"}))
@@ -88,7 +107,7 @@ def _plan(payload: dict) -> list[tuple[str, dict]]:
     for line in payload.get("new_transcript", []):
         text = re.sub(r"^\[[^\]]*\]\s*[^:]*:\s*", "", line)
         calls += _calls_for_line(text, flow)
-    if payload.get("mode") in ("gap_review", "final"):
+    if payload.get("mode") in ("gap_review", "gap_check", "final"):
         labels = {s["label"] for s in flow.get("steps", [])}
         asked = " ".join(g["question"].lower() for g in flow.get("gaps", []))
         if "OTP login" in labels and "otp is wrong" not in asked:

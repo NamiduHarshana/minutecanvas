@@ -227,17 +227,24 @@ const MARGIN = 16;
  * into rows ("snake") and keeps the fold that gives the biggest readable scale for the box.
  * Edges that cross into the next row are routed down through the gap between rows.
  */
-export function layoutFlow(flow: FlowData, box?: { w: number; h: number; enough?: number }): FlowLayout {
+export function layoutFlow(
+  flow: FlowData,
+  box?: { w: number; h: number; enough?: number; widthOnly?: boolean },
+): FlowLayout {
   const base = layoutOnce(flow);
   if (!box || !base.nodes.length) return base;
-  const scaleOf = (w: number, h: number) => Math.min(box.w / Math.max(1, w), box.h / Math.max(1, h));
+  // widthOnly (big flows on the live map): fold so the rows fit the panel width at full size; the height may
+  // grow past the panel and the view scrolls instead of shrinking the text
+  const scaleOf = box.widthOnly
+    ? (w: number) => Math.min(1, box.w / Math.max(1, w))
+    : (w: number, h: number) => Math.min(box.w / Math.max(1, w), box.h / Math.max(1, h));
   if (box.enough && scaleOf(base.width, base.height) >= box.enough) return base;
 
   // columns = distinct node centre x values (dagre puts every rank on one x)
   const centres = [...new Set(base.nodes.map((n) => Math.round(n.x + n.w / 2)))].sort((a, b) => a - b);
   if (centres.length < 3) return base;
   // bigger text wins, but every arrow that has to jump to the next row costs a little
-  const score = (L: FlowLayout) => scaleOf(L.width, L.height) - 0.03 * L.wrapped;
+  const score = (L: FlowLayout) => scaleOf(L.width, L.height) - (box.widthOnly ? 0.004 : 0.03) * L.wrapped;
   // try 2, 3, … rows with the columns shared out evenly (7 columns -> 4+3, never 6+1, which leaves a lonely box)
   let best = base;
   const tried = new Set<number>();

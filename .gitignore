@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# MinuteCanvas local debug dumps (transcripts)
+backend/debug/

@@ -7,6 +7,7 @@ import {
   EdgeLabelRenderer,
   Handle,
   MarkerType,
+  MiniMap,
   Position,
   ReactFlow,
   ReactFlowProvider,
@@ -28,6 +29,7 @@ import {
   Flag,
   GitBranch,
   LoaderCircle,
+  LocateFixed,
   Play,
   Quote as QuoteIcon,
   ScanSearch,
@@ -47,6 +49,10 @@ const FLASH_MS = 9000;
 const PULSE_MS = 3200;
 const BODY_MIN = 260;
 const BODY_MAX = 500;
+// below this zoom the box text is too small to read: big flows scroll and follow the newest step instead
+const READ_ZOOM = 0.8;
+const FOLLOW_ZOOM = 0.95;
+const USER_MOVE_HOLD_MS = 20000;   // after the user pans/zooms, don't move the view for this long
 
 const KIND_LABEL: Record<StepKind, string> = { start: "Start", step: "Step", decision: "Decision", end: "End" };
 
@@ -171,7 +177,11 @@ function buildGraph(
   pulse: { id: string; at: number } | null,
 ) {
   // fold long flows into rows when fitting the whole line would make the text too small
-  const L = layoutFlow(flow, { ...box, enough: 0.8 });
+  let L = layoutFlow(flow, { ...box, enough: READ_ZOOM });
+  const fitScale = Math.min(box.w / Math.max(1, L.width), box.h / Math.max(1, L.height));
+  const fits = fitScale >= READ_ZOOM * 0.97;
+  // too big to fit readable: rows as wide as the panel at (near) full size, the view scrolls (minimap + follow)
+  if (!fits) L = layoutFlow(flow, { w: box.w / 0.88, h: box.h, widthOnly: true });
   const fresh = (id: string) => !!flash[id] && now - flash[id] < FLASH_MS;
   const focused = (nodeId: string) => !!pulse && pulse.id === nodeId && now - pulse.at < PULSE_MS;
   const nodes: Node[] = L.nodes.map((n) =>
@@ -191,6 +201,8 @@ function buildGraph(
             selected: sel?.kind === "step" && sel.id === n.id,
             focused: focused(n.id),
           } satisfies StepData,
+          width: n.w,      // fixed sizes (same as the CSS): the minimap needs them
+          height: n.h,
           draggable: false,
         }
       : {
@@ -203,6 +215,8 @@ function buildGraph(
             selected: sel?.kind === "gap" && sel.id === n.gap.id,
             focused: focused(n.id),
           } satisfies GapData,
+          width: n.w,
+          height: n.h,
           draggable: false,
         },
   );
@@ -224,7 +238,17 @@ function buildGraph(
       markerEnd: { type: MarkerType.ArrowClosed, color, width: 18, height: 18 },
     };
   });
-  return { nodes, edges, openGaps: L.openGaps, width: L.width, height: L.height };
+  return { nodes, edges, openGaps: L.openGaps, width: L.width, height: L.height, fits };
+}
+
+/** The step to keep in view while a long meeting goes on: the one added or changed last. */
+function newestStep(flow: FlowData): FlowStep | null {
+  let best: FlowStep | null = null;
+  for (const s of flow.steps) {
+    const at = Math.max(s.t, s.updated_t ?? -1);
+    if (!best || at >= Math.max(best.t, best.updated_t ?? -1)) best = s;
+  }
+  return best;
 }
 
 // ---------------- panel ----------------
@@ -270,8 +294,9 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
   }, [flash, pulse]);
 
   const bodyRef = useRef<HTMLDivElement>(null);
+  const fitsRef = useRef(true);
   const [boxW, setBoxW] = useState(1000);
-  const { nodes, edges, openGaps, width, height } = useMemo(
+  const { nodes, edges, openGaps, width, height, fits } = useMemo(
     () => buildGraph(flow, flash, sel, now, { w: boxW - 40, h: BODY_MAX - 70 }, pulse),
     [flow, flash, sel, now, boxW, pulse],
   );
@@ -281,26 +306,54 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
     // refit whenever the panel itself changes size (sidebar toggle, window resize, new height)
     const ro = new ResizeObserver(() => {
       setBoxW(el.clientWidth || 1000);
-      requestAnimationFrame(() => rf.fitView({ padding: 0.06, maxZoom: 1.15 }));
+      requestAnimationFrame(() => {
+        if (fitsRef.current) rf.fitView({ padding: 0.06, maxZoom: 1.15 });
+      });
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, [open, rf]);
   // grow with the graph so text stays readable (scale is limited by width), within limits
   const scale = Math.min(1.1, Math.max(0.45, (boxW - 40) / Math.max(1, width)));
-  const bodyH = Math.round(Math.min(BODY_MAX, Math.max(BODY_MIN, height * scale + 70)));
+  const bodyH = fits ? Math.round(Math.min(BODY_MAX, Math.max(BODY_MIN, height * scale + 70))) : BODY_MAX;
   const openConflicts = flow.contradictions.filter((c) => !c.resolved);
 
-  // keep the whole map in view as it grows
-  const shape = `${nodes.length}:${edges.length}:${bodyH}`;
+  // small flow: keep the whole map in view as it grows.
+  // big flow: stay at a readable zoom and follow the newest step (unless the user is looking around)
+  const userMoved = useRef(0);
+  const [following, setFollowing] = useState(true);
+  const newest = newestStep(flow);
+  const newestKey = newest ? `${newest.id}:${newest.updated_t ?? newest.t}` : "";
+  const shape = `${nodes.length}:${edges.length}:${bodyH}:${fits}`;
+  const follow = useCallback(
+    (duration = 450) => {
+      const n = newest && nodes.find((x) => x.id === newest.id);
+      if (!n) return;
+      const z = Math.min(FOLLOW_ZOOM, Math.max(READ_ZOOM, (boxW - 40) / Math.max(1, width)));
+      // whole row in view (rows are as wide as the panel), newest step near the bottom so the steps
+      // before it stay visible above
+      const cx = width * z <= boxW ? width / 2 : n.position.x + 108;
+      const cy = n.position.y + 92 + 56 / z - bodyH / 2 / z;
+      rf.setCenter(cx, Math.max(bodyH / 2 / z - 10, cy), { zoom: z, duration });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [newestKey, nodes, rf, boxW, width, bodyH],
+  );
   useEffect(() => {
     if (!open) return;
-    const id = setTimeout(() => rf.fitView({ padding: 0.06, duration: 450, maxZoom: 1.15 }), 60);
+    const id = setTimeout(() => {
+      if (fits) rf.fitView({ padding: 0.06, duration: 450, maxZoom: 1.15 });
+      else if (following && Date.now() - userMoved.current > USER_MOVE_HOLD_MS) follow();
+    }, 60);
     return () => clearTimeout(id);
-  }, [shape, open, rf]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shape, newestKey, open, fits, rf]);
+
+  fitsRef.current = fits;
 
   const centerOn = useCallback(
     (nodeId: string, highlight = false) => {
+      userMoved.current = Date.now();      // a jump the user asked for: don't pull the view away right after
       if (highlight) setPulse({ id: nodeId, at: Date.now() });
       setTimeout(() => rf.fitView({ nodes: [{ id: nodeId }], padding: 0.9, duration: 500, maxZoom: 1.2 }), 80);
     },
@@ -336,6 +389,7 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
   }
 
   const reviewing = status?.state === "thinking" && status.mode === "gap_review";
+  const checking = status?.state === "thinking" && status.mode === "gap_check";
   const mapping = status?.state === "thinking" && !reviewing;
 
   return (
@@ -351,7 +405,7 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
         </button>
         {mapping && (
           <span className="fm-busy">
-            <LoaderCircle size={13} className="spin" aria-hidden /> Muse Spark is mapping…
+            <LoaderCircle size={13} className="spin" aria-hidden /> {checking ? "Muse Spark is checking for gaps…" : "Muse Spark is mapping…"}
           </span>
         )}
         <div className="fm-head-right">
@@ -414,17 +468,50 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
               fitViewOptions={{ padding: 0.06, maxZoom: 1.15 }}
               minZoom={0.25}
               maxZoom={1.6}
-              attributionPosition="top-right"
+              attributionPosition="bottom-left"
               onNodeClick={(_, n) => {
                 if (n.type === "gap") setSel({ kind: "gap", id: n.id.slice(4) });
                 else setSel({ kind: "step", id: n.id });
               }}
               onPaneClick={() => setSel(null)}
+              onMoveStart={(e) => {
+                // only real pans/zooms by the user have an event (our own setCenter/fitView don't)
+                if (e && !fits) {
+                  userMoved.current = Date.now();
+                  setFollowing(false);
+                }
+              }}
             >
               <Background gap={18} size={1} color="#dfe3ea" />
               <Controls showInteractive={false} position="bottom-right" />
+              {!fits && (
+                <MiniMap
+                  position="top-right"
+                  pannable
+                  zoomable
+                  ariaLabel="Whole flow"
+                  nodeBorderRadius={6}
+                  nodeColor={(n) =>
+                    n.type === "gap" ? "#f5c26b" : (n.data as StepData).bugs ? "#f08b8b" : (n.data as StepData).fresh ? "#818cf8" : "#cfd4dc"
+                  }
+                  maskColor="rgba(240, 242, 245, 0.65)"
+                  style={{ width: 132, height: 92 }}
+                />
+              )}
             </ReactFlow>
           </div>
+          {!fits && !following && (
+            <button
+              className="fm-follow"
+              onClick={() => {
+                userMoved.current = 0;
+                setFollowing(true);
+                follow();
+              }}
+            >
+              <LocateFixed size={13} aria-hidden /> Follow the latest step
+            </button>
+          )}
           {sel && (
             <Drawer
               flow={flow}

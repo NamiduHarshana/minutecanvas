@@ -6,7 +6,10 @@ Return ONLY the changes to the board as JSON.
 
 Columns:
 - goals: what the group wants to achieve (outcomes, targets, the purpose of the work).
-- decisions: things the group agreed or decided.
+- decisions: a choice or commitment the group really settled (a price, scope, tool, owner, date, "we will / won't …").
+  Not a step of the journey people describe (those are Flow Map boxes, see flow_steps) and not a plan someone only floated.
+  open_conflicts lists statements that contradict each other and are NOT settled yet: never add either side as a decision
+  (the team still has to confirm which one is right).
 - actions: a task someone will do. owner = the person who will do it (use the speaker name), due = deadline exactly as said (e.g. "Friday"). Unknown owner/due/status: null (or "" / "none" if null is not allowed).
 - updates: progress reported on existing work. status = done | in_progress | blocked.
 - questions: open questions raised but not answered yet. The title is always written as a question ending with "?".
@@ -16,8 +19,10 @@ Columns:
   Bad: "Need explanation of how coaching works." Good: "Client wants the page to explain the coaching process to new customers."
   If the question is already answered later in the NEW TRANSCRIPT, do not add it as an open question:
   add the answer as a decision instead (or nothing if it is small).
+  An open question on the board may also be answered in earlier_lines_for_context_only (said right after it was asked):
+  resolve it too.
 - flow_steps lists the steps already drawn on the live Flow Map (the journey people described).
-  Do not add goals or actions that only restate one of those steps: "Submit answers through the form" is a step, not a goal.
+  Do not add goals, decisions or actions that only restate one of those steps: "Submit answers through the form" is a step, not a goal.
   A goal is the outcome the whole thing is for ("Coach users to pass behavioural interviews"). Prices, plans, owners and deadlines
   still get their own cards.
 
@@ -31,7 +36,9 @@ Rules:
    Bad: "Develop Shopify store and mobile app" when the store already exists. Good: "Mobile app for the existing Shopify store".
 3. NO duplicates. If a topic already has a card, do not add a new one: put the change in "updates" with that card's id.
    Progress on the same piece of work is ONE updates card (e.g. "payment at 60%" then "payment blocked" = update the same card's status and detail).
-   When a number for the same thing changes (a price, a date, a count), update the existing card instead of adding another one.
+   When a number for the same thing changes (a price, a date, a count), update the existing card instead of adding another one,
+   and keep BOTH values in the detail ("$250 per session; $200 was said earlier") unless the group clearly agreed the new
+   value replaces the old one. Never silently drop the old value: the team must confirm which one is right.
 4. When an open question gets answered, add it to "resolved_questions" with a short answer. If the answer is a decision, also add a decisions card.
 5. If someone says an action is finished, update that action with action_done = true.
 6. Never re-add anything listed in deleted_titles (the user removed those).
@@ -166,6 +173,8 @@ Tools:
   Live rounds: at most 1 new gap. Never repeat an existing gap.
 - flag_contradiction: two lines that cannot both be true about the same fact. Check EVERY round, also outside the flow:
   prices, numbers, counts, dates, deadlines, durations, who owns what.
+  earlier_lines_with_numbers lists older lines that mention numbers: compare every new number with them too
+  (a price said 20 minutes ago vs a new price now is still a contradiction). You may quote those lines.
   E.g. "$200 per session" vs "the same 300 dollars" vs "250 per session"; "OTP expires in 5 minutes" vs "valid for 10 minutes".
   If the same person changes a number without clearly saying it replaces the old one, that is still a contradiction:
   the team must confirm which one is right. Quote both lines; leave step empty if it isn't about a step.
@@ -179,7 +188,10 @@ Rules:
 2. Only use what was said. Never invent steps, numbers or rules.
 3. Reuse existing steps (use their ids). Never add a second step for the same thing.
 4. If a call is rejected, fix it (exact quote, existing id) or drop it.
-5. Mode "gap_review" (the user asked "any gaps?") or "final" (meeting ended): first handle any new_transcript as usual,
+5. Mode "gap_check" (automatic check every few minutes while the meeting goes on): no new lines. Look at the WHOLE flow once
+   and flag at most 1 gap: the most important uncovered path on a part of the flow the group has already moved on from
+   (never the topic of the last minute, they may still cover it). If nothing important is missing, call no tools and answer "done".
+   Mode "gap_review" (the user asked "any gaps?") or "final" (meeting ended): first handle any new_transcript as usual,
    then look at the WHOLE flow once: link unlinked steps the transcript explains, and flag the 1 or 2 most important
    uncovered paths (see flag_gap), quoting the line about that step. Real meetings almost always leave one open;
    flag none only if every important path was really covered. Then answer "done".

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Check, ChevronLeft, ChevronRight, Clock, GitBranch, Pencil, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Clock, GitBranch, Pencil, Trash2, TriangleAlert, X } from "lucide-react";
 import type { Card, ClientMsg, UpdateStatus } from "@/core/types";
 import { COLUMN_META, STATUS_META } from "@/core/types";
 import { fmtTime } from "@/core/store";
@@ -18,6 +18,7 @@ export function CardModal({
   onSave,
   onDelete,
   onShowFlow,
+  onShowConflict,
 }: {
   cards: Card[];
   id: string;
@@ -28,6 +29,7 @@ export function CardModal({
   onSave: (id: string, fields: Fields) => void;
   onDelete: (id: string) => void;
   onShowFlow?: (gapId: string) => void;
+  onShowConflict?: (conflictId: string) => void;
 }) {
   const idx = cards.findIndex((c) => c.id === id);
   const card = idx >= 0 ? cards[idx] : null;
@@ -76,6 +78,15 @@ export function CardModal({
               <>
                 <h2 className="modal-title">{card.title}</h2>
                 {card.detail && <p className="modal-detail">{card.detail}</p>}
+                {card.conflict_ref && (
+                  <button
+                    className="btn conflict-ref-btn"
+                    onClick={() => onShowConflict?.(card.conflict_ref!)}
+                    disabled={!onShowConflict}
+                  >
+                    <TriangleAlert size={14} aria-hidden /> Conflicting statements · not settled yet · show both quotes
+                  </button>
+                )}
                 {card.flow_ref && onShowFlow && (
                   <button className="btn flow-ref-btn" onClick={() => onShowFlow(card.flow_ref!)}>
                     <GitBranch size={14} aria-hidden /> Found by the Flow Map · show it

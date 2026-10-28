@@ -23,6 +23,7 @@ export interface Card {
   source: "ai" | "user";
   user_locked: boolean;
   flow_ref?: string | null;        // questions made from a Flow Map gap
+  conflict_ref?: string | null;    // states one side of an unsettled Flow Map conflict: not decided
 }
 
 // ---------------- Live Flow Map ----------------
@@ -59,7 +60,7 @@ export type FlowEventKind =
   | "gap" | "gap_moved" | "gap_resolved" | "contradiction" | "contradiction_resolved";
 export interface FlowEvent { kind: FlowEventKind; id: string; step?: string | null; text: string }
 export interface FlowStats { accepted: number; rejected: number; rounds: number }
-export type FlowMode = "live" | "gap_review" | "final";
+export type FlowMode = "live" | "gap_review" | "gap_check" | "final";
 
 export interface Line {
   id: number;

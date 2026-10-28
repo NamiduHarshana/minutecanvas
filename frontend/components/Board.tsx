@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Check, EllipsisVertical, GitBranch, Pencil, Sparkles, Trash2 } from "lucide-react";
+import { Check, EllipsisVertical, GitBranch, Pencil, Sparkles, Trash2, TriangleAlert } from "lucide-react";
 import type { Card } from "@/core/types";
 import { COLUMNS, COLUMN_META } from "@/core/types";
 import type { Flash, MeetingState } from "@/core/store";
@@ -134,7 +134,7 @@ function SmallCard({
   const answered = c.column === "questions" && c.resolved;
   return (
     <article
-      className={`small-card ${flash ? "flash" : ""} ${struck ? "is-done" : ""} ${answered ? "is-answered" : ""}`}
+      className={`small-card ${flash ? "flash" : ""} ${struck ? "is-done" : ""} ${answered ? "is-answered" : ""} ${c.conflict_ref ? "is-conflict" : ""}`}
       onClick={() => actions.open(c.id)}
       tabIndex={0}
       onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && actions.open(c.id)}
@@ -170,6 +170,11 @@ function SmallCard({
             </span>
           )}
         </div>
+        {c.conflict_ref && (
+          <span className="sc-conflict" title="Conflicting statements: the team still has to confirm which one is right">
+            <TriangleAlert size={11} aria-hidden /> {c.column === "decisions" ? "Not decided" : "Conflict"}
+          </span>
+        )}
         {/* one line only: owner / due / status when there are any, otherwise the detail */}
         {hasMeta(c) ? (
           <CardMeta card={c} />

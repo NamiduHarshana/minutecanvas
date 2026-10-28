@@ -247,6 +247,18 @@ def _mock_spark(user: str, schema_name: str) -> dict:
                 "takeaways": ["Stripe is the payment provider", "Login API is blocked on the client's keys",
                               "API docs go to the client by Friday"],
                 "image_prompt": "team around a table"}
+    # scripted: the OTP time becomes a decision card, so the "Conflict · not decided" tag shows in mock mode
+    try:
+        lines = json.loads(user).get("new_transcript", [])
+    except ValueError:
+        lines = []
+    for line in lines:
+        m = re.match(r"\[([\d:]+)\][^:]*:\s*(.*)", line)
+        if m and "valid for ten minutes" in m.group(2):
+            return {"new_cards": [{"column": "decisions", "title": "OTP valid for ten minutes",
+                                   "detail": "Login code expires after ten minutes.", "owner": None, "due": None,
+                                   "status": None, "said_at": m.group(1), "image_prompt": "a phone with a timer"}],
+                    "updates": [], "resolved_questions": [], "meeting_title": "Mock Client Sync"}
     col, title, owner, due, status = random.choice(_MOCK_CARDS)
     return {
         "new_cards": [{"column": col, "title": f"{title} #{random.randint(1, 999)}", "detail": "Mock card from MOCK_META mode.",

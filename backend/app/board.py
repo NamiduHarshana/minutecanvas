@@ -38,6 +38,7 @@ class Card:
     source: str = "ai"               # ai / user
     user_locked: bool = False        # user edited it -> AI won't overwrite text
     flow_ref: str | None = None      # questions made from a Flow Map gap: the gap id ("g2")
+    conflict_ref: str | None = None  # states one side of a Flow Map contradiction ("c1"): not settled
     image_prompt: str = ""
 
     def public(self) -> dict:
@@ -70,6 +71,46 @@ def _similar(a: str, b: str) -> bool:
         return a.strip().lower() == b.strip().lower()
     return len(x & y) / len(x | y) >= 0.75
 
+
+_NUM_WORDS = {w: str(i) for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen twenty".split())}
+_NUM_WORDS.update({"thirty": "30", "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70",
+                   "eighty": "80", "ninety": "90", "hundred": "100", "thousand": "1000"})
+
+
+def numbers(s: str) -> set[str]:
+    """Numbers in a text, normalised ("$1,000" -> "1000", "five" -> "5"); used to tie cards to conflicts."""
+    s = (s or "").lower()
+    out = {m.replace(",", "") for m in re.findall(r"\d[\d,]*(?:\.\d+)?", s)}
+    out.update(_NUM_WORDS[w] for w in re.findall(r"[a-z]+", s) if w in _NUM_WORDS)
+    out.update(str(int(float(m) * 1000)) for m in re.findall(r"(\d+(?:\.\d+)?)\s*k\b", s))
+    return out
+
+
+def _is_big(n: str) -> bool:
+    try:
+        return float(n) >= 10
+    except ValueError:
+        return False
+
+
+_STOP = {"the", "and", "for", "with", "into", "from", "their", "they", "user", "users", "customer",
+         "customers", "will", "can", "should", "must", "then", "via", "using", "through", "each", "after"}
+
+
+def restates_step(title: str, steps: list[str]) -> bool:
+    """A card that only repeats a Flow Map step ("Submit the story map" vs step "Submit story map")."""
+    if numbers(title):
+        return False                     # prices, counts, dates are real facts, keep them
+    t = _norm(title) - _STOP
+    if len(t) < 2:
+        return False
+    for label in steps:
+        st = _norm(label) - _STOP
+        if len(st) >= 2 and st <= t and len(t - st) <= 1:
+            return True
+    return False
 
 @dataclass
 class BoardChange:
@@ -107,6 +148,8 @@ class Board:
                 item["done"] = c.done
             if c.column == "questions":
                 item["resolved"] = c.resolved
+            if c.conflict_ref:
+                item["conflict"] = c.conflict_ref
             out.append(item)
         return out
 
@@ -118,7 +161,7 @@ class Board:
                 return c
         return None
 
-    def apply_spark(self, ops: dict, now_t: float) -> BoardChange:
+    def apply_spark(self, ops: dict, now_t: float, flow_steps: list[str] | None = None) -> BoardChange:
         ch = BoardChange()
         if not isinstance(ops, dict):
             return ch
@@ -154,6 +197,8 @@ class Board:
                 continue
             if any(_similar(t, title) for t in self.deleted_titles):
                 continue
+            if column in ("goals", "decisions", "actions") and flow_steps and restates_step(title, flow_steps):
+                continue                 # already a box on the Flow Map
             dup = self._find_duplicate(column, title)
             if dup:  # same topic -> merge into the existing card instead of a 2nd card
                 if self._apply_update(dup, n, now_t) and dup not in ch.updated and dup not in ch.added:
@@ -258,6 +303,33 @@ class Board:
         c.answer = answer or c.answer
         c.updated_t = round(now_t, 1)
         return c
+
+    # ---------- Flow Map contradictions -> cards ----------
+    def link_conflicts(self, conflicts: list) -> list[Card]:
+        """Tag cards that state one side of an open contradiction (said on one of its two lines and sharing
+        a number with it). Such a card is not a settled decision. Returns the cards that changed."""
+        changed: list[Card] = []
+        open_ids = {c.id for c in conflicts if not c.resolved}
+        for c in self.cards.values():                 # a settled conflict frees its cards
+            if c.conflict_ref and c.conflict_ref not in open_ids:
+                c.conflict_ref = None
+                changed.append(c)
+        for k in conflicts:
+            if k.resolved:
+                continue
+            for ev in (k.a, k.b):
+                nums = numbers(ev.quote)
+                big = {n for n in nums if _is_big(n)}      # "1400", "$250": specific enough to match from nearby lines
+                for c in self.cards.values():
+                    if c.conflict_ref or c.column == "questions":
+                        continue
+                    dt = abs(c.t - ev.t)
+                    shared = nums & numbers(f"{c.title} {c.detail}")
+                    if (dt <= 2.5 and shared) or (dt <= 30 and shared & big):
+                        c.conflict_ref = k.id
+                        if c not in changed:
+                            changed.append(c)
+        return changed
 
     def pending_images(self) -> int:
         return sum(1 for c in self.cards.values() if c.image_status == "pending")

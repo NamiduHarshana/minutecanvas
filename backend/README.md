@@ -22,6 +22,7 @@ pytest -q                                   # fake Meta, no credits
 python scripts/live_test.py meeting.wav --seconds 120 --keywords "Claude,MinuteCanvas"   # REAL API
 ```
 First real run: set `DEBUG_VOICE=1` to log raw Meta voice messages.
+`DEBUG_DUMP=1` (local testing only) saves the transcript and every Spark call (request + answer) to `backend/debug/<session>.json` (git-ignored).
 
 ## Deploy (Cloud Run, us-central1)
 
@@ -71,6 +72,9 @@ Tools: `add_step` · `link_steps` · `update_step` · `report_bug` · `flag_gap`
   in the transcript is rejected and the error goes back to the agent, which gets one more turn to fix it.
 - A flagged gap becomes a question in Open questions (`Card.flow_ref`); answering/deleting it updates the gap.
 - `gap_review` runs a review pass now (cooldown `GAP_REVIEW_COOLDOWN_S`); Stop runs a final pass.
+- While recording, an automatic `gap_check` pass runs every `AUTO_GAP_CHECK_S` (default 240 s, 0 = off) once the map has 3+ steps and changed since the last check (max 1 new gap). Live rounds only see ~45 s of talk; a missing path shows only after the group moves on.
+- The Flow agent also gets older lines that mention numbers, so a price said 20 minutes ago is compared with a new one (contradictions).
+- Cards that state one side of an open contradiction get `Card.conflict_ref` (shown as "Not decided" / "Conflict"); they leave the report's Decisions until it is settled.
 - If the API rejects `tools`, the agent switches to the same calls as JSON (`FLOW_JSON_SCHEMA`) automatically.
 - Settings: `FLOW_ENABLED=1`, `MAX_FLOW_CALLS=150`. `MOCK_META=1` plays a scripted sofa-shop client meeting
   through the same quote check (one wrong quote on purpose to show reject → retry).

@@ -215,7 +215,8 @@ function onServer(s: MeetingState, m: ServerMsg): MeetingState {
         const k = flashFor(prev, c);
         if (k) {
           flash[c.id] = { kind: k, at: now };
-          acts.push({ id: activityId++, at: now, kind: k, cardId: c.id, card: c, before: prev });
+          // "updated a card" items buried the gaps and conflicts: the card itself still flashes "Updated"
+          if (k !== "updated") acts.push({ id: activityId++, at: now, kind: k, cardId: c.id, card: c, before: prev });
         }
         cards[c.id] = c;
       });

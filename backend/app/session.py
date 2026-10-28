@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import re
 import secrets
 import time
 import uuid
@@ -24,11 +26,15 @@ from .security import RateLimiter, clean_text
 log = logging.getLogger("minutecanvas.session")
 
 TRANSCRIPT_SNAPSHOT = 300   # turns sent in "hello" after a reconnect
-CONTEXT_LINES = 6           # already-processed lines given to Spark for continuity
+CONTEXT_LINES = 6           # already-processed lines given to the Flow agent for continuity
+CARDS_CONTEXT_LINES = 16    # cards round: enough to see a question answered right after it was asked
+NUMBER_LINES = 30           # older lines with numbers shown to the Flow agent (contradictions across the meeting)
 MAX_SPARK_LINES = 120       # cap per call (long meetings: only new transcript + board)
 FLOW_MAX_TURNS = 3          # agent turns per round (2nd/3rd only to fix rejected calls)
 FLOW_MAX_CALLS_PER_TURN = 20
 REVIEW_CONTEXT_LINES = 80   # gap review / final pass: recent lines shown for context
+_HAS_NUMBER = re.compile(r"\d|\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|"
+                         r"forty|fifty|hundred|thousand)\b", re.I)
 
 
 def fmt_t(t: float) -> str:
@@ -67,6 +73,9 @@ class Session:
         self.flow_calls = 0
         self.flow_stats = {"accepted": 0, "rejected": 0, "rounds": 0}
         self.last_gap_review = -1e9
+        self.last_auto_check = time.monotonic()
+        self.auto_check_shape = (0, 0)   # (steps, links) at the last automatic gap check
+        self.debug_calls: list[dict] = []
         self.report: dict | None = None
         self.socket: WebSocket | None = None
         self.send_lock = asyncio.Lock()
@@ -179,6 +188,7 @@ class Session:
         await self.send({"type": "state", "state": self.state, "step": "report"})
         self.report = await self._build_report()
         self.state = "done"
+        self._debug("report", report=self.report)
         for t in self.tasks:
             t.cancel()
         await self.send({"type": "report_ready", "report": self.report})
@@ -257,6 +267,24 @@ class Session:
             new = self.transcript[self.spark_done_idx:]
             if sum(len(x["text"]) for x in new) >= settings.spark_min_new_chars:
                 await self.spark_once()
+            if self.state in ("recording", "paused"):
+                await self.auto_gap_check()
+
+    async def auto_gap_check(self) -> bool:
+        """Every few minutes: one gap check over the whole flow. Live rounds only see ~45 s of talk, but a missing
+        path ("what happens after they submit?") only shows once the group has moved on to something else."""
+        if settings.auto_gap_check_s <= 0 or len(self.flow.steps) < settings.auto_gap_min_steps:
+            return False
+        if time.monotonic() - max(self.last_auto_check, self.last_gap_review) < settings.auto_gap_check_s:
+            return False
+        shape = (len(self.flow.steps), len(self.flow.links))
+        if shape == self.auto_check_shape:      # nothing new on the map since the last check
+            return False
+        self.last_auto_check = time.monotonic()
+        self.auto_check_shape = shape
+        async with self.spark_lock:
+            await self._flow_round("gap_check")
+        return True
 
     async def spark_once(self, final: bool = False):
         """One round: the cards call and the Flow agent run in parallel (no extra delay)."""
@@ -273,12 +301,15 @@ class Session:
                 await self.send({"type": "notice", "message": "AI card limit for this session reached."})
                 return
             new = new[-MAX_SPARK_LINES:]
-            context = self.transcript[max(0, self.spark_done_idx - CONTEXT_LINES):self.spark_done_idx]
+            context = self.transcript[max(0, self.spark_done_idx - CARDS_CONTEXT_LINES):self.spark_done_idx]
+            steps = [st.label for st in self.flow.steps.values()][:40]
             payload = {
                 "current_board": self.board.for_spark(),
                 "board_title": self.board.title,
                 "deleted_titles": self.board.deleted_titles[-30:],
-                "flow_steps": [st.label for st in self.flow.steps.values()][:40],
+                "flow_steps": steps,
+                "open_conflicts": [{"id": c.id, "note": c.note, "a": c.a.quote, "b": c.b.quote}
+                                   for c in self.flow.contradictions.values() if not c.resolved][:10],
                 "earlier_lines_for_context_only": [self._line(x) for x in context],
                 "new_transcript": [self._line(x) for x in new],
                 "is_final_pass": final,
@@ -290,10 +321,15 @@ class Session:
                 ops = await self.meta.spark_json(SPARK_SYSTEM, json.dumps(payload, ensure_ascii=False), "board_ops", SPARK_SCHEMA)
             except Exception as e:  # noqa: BLE001 - keep the lines, retry next tick
                 log.warning("spark failed: %s", e)
+                self._debug("cards", final=final, payload=payload, error=str(e))
                 await self.send({"type": "spark_status", "state": "error"})
                 return
             self.spark_done_idx = end
-            ch = self.board.apply_spark(ops, self.meeting_t)
+            self._debug("cards", final=final, seconds=round(time.monotonic() - t0, 1), payload=payload, response=ops)
+            ch = self.board.apply_spark(ops, self.meeting_t, steps)
+            for c in self.board.link_conflicts(list(self.flow.contradictions.values())):
+                if c not in ch.added and c not in ch.updated:
+                    ch.updated.append(c)
             log.info("spark %.1fs: +%d cards, %d updated", time.monotonic() - t0, len(ch.added), len(ch.updated))
             if self.board.title and ops.get("meeting_title"):
                 await self.send({"type": "board_title", "title": self.board.title})
@@ -313,6 +349,27 @@ class Session:
                     gap_changed = True
             if gap_changed:
                 await self.send_flow([])
+
+    # ---------------- debug dump (DEBUG_DUMP=1, local testing only) ----------------
+    def _debug(self, kind: str, **data):
+        if not settings.debug_dump:
+            return
+        self.debug_calls.append({"kind": kind, "meeting_t": round(self.meeting_t, 1),
+                                 "wall": datetime.now(timezone.utc).isoformat(timespec="seconds"), **data})
+        snap = {
+            "session": self.id, "created": self.created_wall.isoformat(), "state": self.state,
+            "speakers": self.speaker_names, "transcript": self.transcript, "board": self.board.public(),
+            "flow": self.flow.public(), "flow_stats": self.flow_stats, "calls": self.debug_calls,
+        }
+        path = os.path.join(settings.debug_dir, f"{self.created_wall.strftime('%Y%m%d-%H%M%S')}-{self.id[:8]}.json")
+        try:
+            os.makedirs(settings.debug_dir, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(snap, f, ensure_ascii=False, indent=1, default=str)
+            os.replace(tmp, path)
+        except OSError as e:
+            log.warning("debug dump failed: %s", e)
 
     def _line(self, x: dict) -> str:
         return f"[{fmt_t(x['t'])}] {self.speaker_name(x['speaker'])}: {x['text']}"
@@ -334,12 +391,12 @@ class Session:
         return True
 
     async def _flow_round(self, mode: str):
-        """mode: live (new lines) / gap_review (user asked) / final (after Stop)."""
+        """mode: live (new lines) / gap_review (user asked) / gap_check (automatic) / final (after Stop)."""
         if not settings.flow_enabled:
             return
         end = len(self.transcript)
         new = self.transcript[self.flow_done_idx:end]
-        if mode == "gap_review":     # only review; unprocessed lines stay for the next live round
+        if mode in ("gap_review", "gap_check"):   # only review; unprocessed lines stay for the next live round
             end = self.flow_done_idx
             new = []
         if mode == "live" and not new:
@@ -355,14 +412,16 @@ class Session:
         n_ctx = CONTEXT_LINES if mode == "live" else REVIEW_CONTEXT_LINES
         lines_all = len(self.transcript)
         context = self.transcript[max(0, start - n_ctx):start]
+        older = self.transcript[:max(0, start - n_ctx)]
         payload = {
             "mode": mode,
             "current_flow": self.flow.for_agent(),
+            "earlier_lines_with_numbers": [self._line(x) for x in older if _HAS_NUMBER.search(x["text"])][-NUMBER_LINES:],
             "earlier_lines_for_context_only": [self._line(x) for x in context],
             "new_transcript": [self._line(x) for x in new],
         }
         lines = self.transcript[:lines_all]      # quotes may come from any line said so far
-        self.flow.gap_budget = 1 if mode == "live" else 2
+        self.flow.gap_budget = 1 if mode in ("live", "gap_check") else 2
         self.flow_calls += 1
         await self.send({"type": "flow_status", "state": "thinking", "mode": mode})
         t0 = time.monotonic()
@@ -378,7 +437,9 @@ class Session:
                 await self._flow_json(payload, lines, acc)
         except Exception as e:  # noqa: BLE001 - first turn failed: keep the lines for next round
             log.warning("flow round failed: %s", e)
+            acc.log.append({"error": str(e)})
             if not acc.turns:
+                self._debug("flow", mode=mode, payload=payload, turns=acc.log)
                 await self.send({"type": "flow_status", "state": "error", "mode": mode})
                 return
         self.flow_done_idx = end
@@ -387,6 +448,11 @@ class Session:
         self.flow_stats["rounds"] += 1
         log.info("flow %s %.1fs: %d turns, %d accepted, %d rejected", mode, time.monotonic() - t0,
                  acc.turns, acc.accepted, acc.rejected)
+        self._debug("flow", mode=mode, seconds=round(time.monotonic() - t0, 1), payload=payload, turns=acc.log)
+        if any(e["kind"].startswith("contradiction") for e in acc.events):
+            for c in self.board.link_conflicts(list(self.flow.contradictions.values())):
+                if c not in acc.cards_added and c not in acc.cards_updated:
+                    acc.cards_updated.append(c)
         for c in acc.cards_added:
             self._queue_image(c)
         if acc.cards_added:
@@ -442,15 +508,19 @@ class Session:
             acc.turns += 1
             calls = [c for c in (msg.get("tool_calls") or []) if isinstance(c, dict)]
             if not calls:
+                acc.log.append({"content": msg.get("content"), "calls": []})
                 break
             messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": calls})
             rejected = 0
+            turn_log: list[dict] = []
+            acc.log.append({"content": msg.get("content"), "calls": turn_log})
             for k, c in enumerate(calls):
                 fn = c.get("function") or {}
                 if k < FLOW_MAX_CALLS_PER_TURN:
                     out = self._apply_flow_call(fn.get("name"), fn.get("arguments"), lines, acc)
                 else:
                     out = {"ok": False, "error": "too many calls in one turn; skipped"}
+                turn_log.append({"name": fn.get("name"), "arguments": fn.get("arguments"), "result": out})
                 rejected += 0 if out.get("ok") else 1
                 messages.append({"role": "tool", "tool_call_id": c.get("id", f"call_{k}"),
                                  "content": json.dumps(out, ensure_ascii=False)})
@@ -474,6 +544,8 @@ class Session:
             if not calls:
                 break
             results = [self._apply_flow_call(c.get("name"), c.get("arguments"), lines, acc) for c in calls]
+            acc.log.append({"calls": [{"name": c.get("name"), "arguments": c.get("arguments"), "result": r}
+                                      for c, r in zip(calls, results)]})
             if all(r.get("ok") for r in results):
                 break
             history += [{"role": "assistant", "content": json.dumps({"calls": calls}, ensure_ascii=False)},
@@ -568,7 +640,8 @@ class Session:
             "goals": [pub(c) for c in cards if c.column == "goals"],
             "updates": [pub(c) for c in sorted((c for c in cards if c.column == "updates"),
                                                 key=lambda c: status_rank.get(c.status or "", 3))],
-            "decisions": [pub(c) for c in cards if c.column == "decisions"],
+            # one side of an unsettled conflict is not a decision (it is on the "What was missed" slide)
+            "decisions": [pub(c) for c in cards if c.column == "decisions" and not c.conflict_ref],
             "actions": [pub(c) for c in cards if c.column == "actions"],
             "open_questions": [pub(c) for c in cards if c.column == "questions" and not c.resolved],
             "answered_questions": [pub(c) for c in cards if c.column == "questions" and c.resolved],
@@ -596,6 +669,7 @@ class _FlowRound:
         self.events: list[dict] = []
         self.cards_added: list[Card] = []
         self.cards_updated: list[Card] = []
+        self.log: list[dict] = []          # every agent turn (debug dump)
 
 
 async def _close_quietly(ws: WebSocket):
