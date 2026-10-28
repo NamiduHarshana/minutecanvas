@@ -89,14 +89,57 @@ class FakeASR:
 WEBP_1PX = base64.b64decode("UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=")
 
 
-def fake_http(spark_calls: list, image_calls: list, reject_extras: bool = True) -> httpx.AsyncClient:
+def _flow_calls_for(payload: dict) -> list[tuple[str, dict]]:
+    """Fake Flow agent: one bad quote on purpose (must be rejected), the rest real."""
+    if payload.get("mode") != "live":
+        return []
+    if not any("ship the login API" in x for x in payload.get("new_transcript", [])):
+        return []
+    return [
+        ("add_step", {"label": "Ship login API", "kind": "start", "quote": "we decided to ship the login API by Friday"}),
+        ("add_step", {"label": "Send docs", "kind": "step", "after": "Ship login API", "link_label": "then",
+                      "quote": "Kasun will send docs"}),
+        ("add_step", {"label": "Invented step", "kind": "step", "quote": "this sentence was never said in the meeting"}),
+        ("flag_gap", {"step": "Send docs", "missing_branch": "docs late", "question": "What if the docs are late",
+                      "quote": "and Kasun will send docs"}),
+    ]
+
+
+def _flow_reply(body: dict, flow_calls: list) -> httpx.Response:
+    flow_calls.append(body)
+    msgs = body["messages"]
+    turn = sum(1 for m in msgs if m["role"] == "assistant")
+    calls = _flow_calls_for(json.loads(msgs[1]["content"])) if turn == 0 else []
+    if not calls:
+        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "done"}}]})
+    tc = [{"id": f"c{turn}{i}", "type": "function", "function": {"name": n, "arguments": json.dumps(a)}}
+          for i, (n, a) in enumerate(calls)]
+    return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": tc}}]})
+
+
+def fake_http(spark_calls: list, image_calls: list, reject_extras: bool = True,
+              flow_calls: list | None = None, tools: str = "ok") -> httpx.AsyncClient:
+    flow_calls = flow_calls if flow_calls is not None else []
+
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
+        if request.url.path.endswith("/chat/completions") and "tools" in body:
+            if tools == "reject":
+                return httpx.Response(400, json={"error": "tools are not supported"})
+            if reject_extras and ("parallel_tool_calls" in body or "reasoning_effort" in body):
+                return httpx.Response(400, json={"error": "unknown parameter parallel_tool_calls"})
+            return _flow_reply(body, flow_calls)
         if request.url.path.endswith("/chat/completions"):
             if reject_extras and "reasoning_effort" in body:     # simulate Meta not accepting the extras
                 return httpx.Response(400, json={"error": "unknown parameter reasoning_effort"})
-            spark_calls.append(body)
             name = body["response_format"]["json_schema"]["name"]
+            if name == "flow_calls":                              # JSON fallback of the Flow agent
+                flow_calls.append(body)
+                turn = sum(1 for m in body["messages"] if m["role"] == "assistant")
+                calls = _flow_calls_for(json.loads(body["messages"][1]["content"])) if turn == 0 else []
+                content = {"calls": [{"name": n, "arguments": json.dumps(a)} for n, a in calls]}
+                return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(content)}}]})
+            spark_calls.append(body)
             if name == "summary":
                 content = {"title": "Other Title", "summary": "We agreed to ship login.",
                            "takeaways": ["Login ships Friday", "<b>Payment</b> is blocked"], "image_prompt": "a rocket"}

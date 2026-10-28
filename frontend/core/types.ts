@@ -22,7 +22,44 @@ export interface Card {
   image_status: ImageStatus;
   source: "ai" | "user";
   user_locked: boolean;
+  flow_ref?: string | null;        // questions made from a Flow Map gap
 }
+
+// ---------------- Live Flow Map ----------------
+export type StepKind = "start" | "step" | "decision" | "end";
+
+/** A transcript line the agent quoted; the backend checked the words are really there. */
+export interface Evidence {
+  line: number;
+  speaker: string;
+  t: number;
+  quote: string;
+}
+
+export interface FlowStep { id: string; label: string; kind: StepKind; t: number; evidence: Evidence[]; updated_t: number | null }
+export interface FlowLink { id: string; src: string; dst: string; label: string; type: "normal" | "fail"; t: number; evidence: Evidence[] }
+export interface FlowBug { id: string; step: string; text: string; t: number; evidence: Evidence[]; fixed: boolean; fix: Evidence | null }
+export interface FlowGap {
+  id: string; step: string; branch: string; question: string; t: number; evidence: Evidence[];
+  resolved: boolean; answer: string | null; resolved_by: Evidence | null; dismissed: boolean; card_id: string | null;
+}
+export interface FlowContradiction {
+  id: string; step: string | null; note: string; a: Evidence; b: Evidence; t: number;
+  resolved: boolean; answer: string | null; resolved_by: Evidence | null;
+}
+export interface FlowData {
+  steps: FlowStep[];
+  links: FlowLink[];
+  bugs: FlowBug[];
+  gaps: FlowGap[];
+  contradictions: FlowContradiction[];
+}
+export type FlowEventKind =
+  | "step_added" | "step_updated" | "link_added" | "link_updated" | "bug" | "bug_fixed"
+  | "gap" | "gap_moved" | "gap_resolved" | "contradiction" | "contradiction_resolved";
+export interface FlowEvent { kind: FlowEventKind; id: string; step?: string | null; text: string }
+export interface FlowStats { accepted: number; rejected: number; rounds: number }
+export type FlowMode = "live" | "gap_review" | "final";
 
 export interface Line {
   id: number;
@@ -52,6 +89,7 @@ export interface Report {
   actions: Card[];
   open_questions: Card[];
   answered_questions?: Card[];      // newer backend
+  flow?: FlowData;                  // Flow Map backend
 }
 
 export interface Snapshot {
@@ -60,6 +98,8 @@ export interface Snapshot {
   audio_bytes_received: number;
   meeting_t: number;
   board: { title: string | null; cards: Card[] };
+  flow?: FlowData;
+  flow_stats?: FlowStats;
   transcript: Line[];
   partials: PartialLine[];
   speakers: Record<string, string>;
@@ -84,12 +124,14 @@ export type ServerMsg =
   | { type: "board_title"; title: string }
   | { type: "speakers"; speakers: Record<string, string> }
   | { type: "spark_status"; state: "thinking" | "idle" | "error"; seconds?: number }
+  | { type: "flow"; flow: FlowData; events: FlowEvent[]; stats: FlowStats }
+  | { type: "flow_status"; state: "thinking" | "idle" | "error"; mode: FlowMode; seconds?: number; accepted?: number; rejected?: number; gaps?: number }
   | { type: "notice"; message: string }
   | { type: "report_ready"; report: Report }
   | { type: "error"; code?: string; message: string };
 
 export type ClientMsg =
-  | { type: "start" | "pause" | "resume" | "stop" }
+  | { type: "start" | "pause" | "resume" | "stop" | "gap_review" }
   | { type: "rename_speaker"; label: string; name: string }
   | { type: "card_edit"; id: string; fields: Partial<Pick<Card, "title" | "detail" | "owner" | "due" | "status" | "done" | "resolved">> }
   | { type: "card_delete"; id: string };

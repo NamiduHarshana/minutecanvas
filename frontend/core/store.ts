@@ -1,11 +1,11 @@
 // Meeting state, driven by server messages.
-import type { Card, Line, PartialLine, Report, ServerMsg, ServerState, StopStep } from "./types";
+import type { Card, FlowData, FlowEvent, FlowMode, FlowStats, Line, PartialLine, Report, ServerMsg, ServerState, StopStep } from "./types";
 import type { ConnStatus } from "./client";
 
 export type Flash = { kind: "updated" | "resolved" | "done"; at: number };
 
 /** Something Muse Spark did on its own to an existing card (shown as a callout). */
-export interface Activity {
+export interface CardActivity {
   id: number;
   at: number;
   kind: Flash["kind"];
@@ -13,6 +13,26 @@ export interface Activity {
   card: Card;
   before: Card;
 }
+
+/** Something the Flow agent found (gap, conflict, bug…), shown as a callout. */
+export interface FlowActivity {
+  id: number;
+  at: number;
+  kind: "flow";
+  event: FlowEvent;
+}
+
+export type Activity = CardActivity | FlowActivity;
+
+export interface FlowStatus {
+  state: "idle" | "thinking" | "error";
+  mode: FlowMode;
+  at: number;
+  rejected?: number;
+}
+
+/** Flow events worth a callout (steps/links just highlight on the map). */
+const FLOW_CALLOUT = new Set(["gap", "gap_resolved", "contradiction", "contradiction_resolved", "bug", "bug_fixed"]);
 
 export interface SparkRound {
   state: "idle" | "thinking" | "error";
@@ -34,6 +54,10 @@ export interface MeetingState {
   spark: SparkRound;
   activity: Activity[];
   title: string | null;
+  flow: FlowData | null;
+  flowStats: FlowStats | null;
+  flowStatus: FlowStatus | null;
+  flowFlash: Record<string, number>;   // node/edge id -> when it changed (highlight)
   cards: Record<string, Card>;
   order: string[];
   transcript: Line[];
@@ -54,6 +78,10 @@ export const initialState: MeetingState = {
   spark: { state: "idle", added: 0, updated: 0, cursor: 0, rounds: 0 },
   activity: [],
   title: null,
+  flow: null,
+  flowStats: null,
+  flowStatus: null,
+  flowFlash: {},
   cards: {},
   order: [],
   transcript: [],
@@ -73,6 +101,7 @@ export type Action =
   | { type: "dismissToast"; id: number }
   | { type: "clearFlash"; ids: string[] }
   | { type: "dismissActivity"; id: number }
+  | { type: "clearFlowFlash"; ids: string[] }
   | { type: "reset" };
 
 let toastId = 1;
@@ -104,6 +133,11 @@ export function reducer(s: MeetingState, a: Action): MeetingState {
       return { ...s, toasts: s.toasts.filter((t) => t.id !== a.id) };
     case "dismissActivity":
       return { ...s, activity: s.activity.filter((x) => x.id !== a.id) };
+    case "clearFlowFlash": {
+      const flowFlash = { ...s.flowFlash };
+      a.ids.forEach((id) => delete flowFlash[id]);
+      return { ...s, flowFlash };
+    }
     case "clearFlash": {
       const flash = { ...s.flash };
       a.ids.forEach((id) => delete flash[id]);
@@ -127,6 +161,8 @@ function onServer(s: MeetingState, m: ServerMsg): MeetingState {
         stopStep: m.state === "stopping" ? s.stopStep : null,
         voice: m.voice,
         title: m.board.title,
+        flow: m.flow ?? null,
+        flowStats: m.flow_stats ?? null,
         cards,
         order: m.board.cards.map((c) => c.id),
         transcript: m.transcript,
@@ -184,7 +220,7 @@ function onServer(s: MeetingState, m: ServerMsg): MeetingState {
         cards[c.id] = c;
       });
       const spark = acts.length && s.spark.state === "thinking" ? { ...s.spark, updated: s.spark.updated + acts.length } : s.spark;
-      const activity = acts.length ? [...s.activity, ...acts].slice(-4) : s.activity;
+      const activity = acts.length ? [...s.activity, ...acts].slice(-40) : s.activity;
       return { ...s, cards, flash, spark, activity };
     }
     case "card_deleted": {
@@ -193,6 +229,21 @@ function onServer(s: MeetingState, m: ServerMsg): MeetingState {
       delete cards[m.id];
       return { ...s, cards, order: s.order.filter((i) => i !== m.id) };
     }
+    case "flow": {
+      const now = Date.now();
+      const flowFlash = { ...s.flowFlash };
+      const acts: Activity[] = [];
+      m.events.forEach((e) => {
+        if (e.kind === "step_added" || e.kind === "step_updated" || e.kind === "link_added" || e.kind === "link_updated" || e.kind === "gap" || e.kind === "gap_moved")
+          flowFlash[e.id] = now;
+        if (e.step) flowFlash[e.step] = now;
+        if (FLOW_CALLOUT.has(e.kind)) acts.push({ id: activityId++, at: now, kind: "flow", event: e });
+      });
+      const activity = acts.length ? [...s.activity, ...acts].slice(-40) : s.activity;
+      return { ...s, flow: m.flow, flowStats: m.stats, flowFlash, activity };
+    }
+    case "flow_status":
+      return { ...s, flowStatus: { state: m.state, mode: m.mode, at: Date.now(), rejected: m.rejected } };
     case "board_title":
       return { ...s, title: m.title };
     case "speakers":

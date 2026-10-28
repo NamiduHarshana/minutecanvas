@@ -37,6 +37,7 @@ class Card:
     image_status: str = "none"       # none / pending / ready / failed / skipped
     source: str = "ai"               # ai / user
     user_locked: bool = False        # user edited it -> AI won't overwrite text
+    flow_ref: str | None = None      # questions made from a Flow Map gap: the gap id ("g2")
     image_prompt: str = ""
 
     def public(self) -> dict:
@@ -229,6 +230,34 @@ class Board:
         self.order.remove(card_id)
         self.deleted_titles.append(c.title)
         return True
+
+    # ---------- Flow Map gaps -> Open questions ----------
+    def add_gap_question(self, gap_id: str, question: str, detail: str, t: float) -> tuple[Card | None, bool]:
+        """Returns (card, is_new). Reuses an open question that already asks the same thing."""
+        title = clean_text(question, TITLE_MAX)
+        if not title or any(_similar(x, title) for x in self.deleted_titles):
+            return None, False
+        dup = self._find_duplicate("questions", title)
+        if dup and not dup.resolved and not dup.flow_ref:
+            dup.flow_ref = gap_id
+            return dup, False
+        if len(self.cards) >= MAX_CARDS:
+            return None, False
+        c = Card(id=uuid.uuid4().hex[:12], column="questions", title=title,
+                 detail=clean_text(detail, DETAIL_MAX), t=round(t, 1), flow_ref=gap_id,
+                 image_prompt="a winding path with one missing piece, a small question mark sign beside it")
+        self.cards[c.id] = c
+        self.order.append(c.id)
+        return c, True
+
+    def resolve_gap_question(self, card_id: str | None, answer: str | None, now_t: float) -> Card | None:
+        c = self.cards.get(card_id or "")
+        if not c or c.resolved:
+            return None
+        c.resolved = True
+        c.answer = answer or c.answer
+        c.updated_t = round(now_t, 1)
+        return c
 
     def pending_images(self) -> int:
         return sum(1 for c in self.cards.values() if c.image_status == "pending")

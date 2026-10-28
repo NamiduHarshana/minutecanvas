@@ -70,9 +70,10 @@ async def server():
     while not srv.started:
         await asyncio.sleep(0.05)
     port = srv.servers[0].sockets[0].getsockname()[1]
-    spark, images = [], []
-    app.state.meta.http = fake_http(spark, images)
-    yield {"http": f"http://127.0.0.1:{port}", "ws": f"ws://127.0.0.1:{port}", "asr": asr, "spark": spark, "images": images}
+    spark, images, flow = [], [], []
+    app.state.meta.http = fake_http(spark, images, flow_calls=flow)
+    yield {"http": f"http://127.0.0.1:{port}", "ws": f"ws://127.0.0.1:{port}", "asr": asr, "spark": spark,
+           "images": images, "flow": flow}
     srv.should_exit = True
     await task
     await asr.stop()
@@ -199,6 +200,27 @@ async def test_full_meeting_with_drop_and_resend(server):
     cards = [c for e in b.of("cards_updated") for c in e["cards"]]
     assert any(c["image_status"] == "ready" for c in cards)
 
+    # ---- Live Flow Map ----
+    flow_reqs = server["flow"]
+    assert flow_reqs and "parallel_tool_calls" not in flow_reqs[0]       # extras dropped after HTTP 400
+    assert [t["function"]["name"] for t in flow_reqs[0]["tools"]][:2] == ["add_step", "link_steps"]
+    # the invented quote was rejected and the agent got a 2nd turn with the error
+    retry = next(r for r in flow_reqs if any(m["role"] == "tool" for m in r["messages"]))
+    tool_msgs = [json.loads(m["content"]) for m in retry["messages"] if m["role"] == "tool"]
+    assert any(not t["ok"] and "not found" in t["error"] for t in tool_msgs)
+    flow = b.of("flow")[-1]["flow"]
+    labels = [st["label"] for st in flow["steps"]]
+    assert labels == ["Ship login API", "Send docs"]                      # invented step never added
+    assert len(flow["links"]) == 1 and flow["links"][0]["label"] == "then"
+    ev = flow["steps"][0]["evidence"][0]
+    assert ev["speaker"] in ("A", "B") and "ship the login API" in ev["quote"]   # speaker/time from the real line
+    assert len(flow["gaps"]) == 1 and flow["gaps"][0]["question"] == "What if the docs are late?"
+    gap_card = next(c for c in added if c.get("flow_ref") == flow["gaps"][0]["id"])
+    assert gap_card["column"] == "questions"
+    events = [e for m in b.of("flow") for e in m["events"]]
+    assert {"step_added", "link_added", "gap"} <= {e["kind"] for e in events}
+    assert rep["flow"]["steps"] and b.of("flow_status")
+
 
 async def test_voice_rotation_keeps_audio(server):
     settings.voice_session_max_s = 3          # Meta 60-min cap, shrunk
@@ -257,3 +279,42 @@ async def test_oversize_frame_kicked(server):
     await b.ws.send((0).to_bytes(8, "little") + b"\x00" * 400_000)
     await asyncio.sleep(0.5)
     assert b.ws.close_code == 1008
+
+
+async def test_flow_json_fallback_and_gap_card_sync(server):
+    """API without tool calling -> the same calls as JSON; deleting the gap's question card dismisses the gap."""
+    spark, images, flow = [], [], []
+    from app.main import app as _app
+    _app.state.meta.http = fake_http(spark, images, flow_calls=flow, tools="reject")
+    r = (await create(server)).json()
+    b = Browser(server["ws"], r["session_id"], r["token"])
+    await b.connect()
+    await b.ws.send(json.dumps({"type": "start"}))
+    t0 = time.monotonic()
+    for i in range(45):
+        b.capture(0.1)
+        await b.ws.send((len(b.captured) - 4800).to_bytes(8, "little") + bytes(b.captured[-4800:]))
+        await asyncio.sleep(max(0, t0 + (i + 1) * 0.1 - time.monotonic()))
+    for _ in range(100):
+        if b.of("flow") and b.of("flow")[-1]["flow"]["gaps"]:
+            break
+        await asyncio.sleep(0.1)
+    assert _app.state.meta.tools_ok is False
+    assert any(f["response_format"]["json_schema"]["name"] == "flow_calls" for f in flow)
+    fl = b.of("flow")[-1]["flow"]
+    assert [s["label"] for s in fl["steps"]] == ["Ship login API", "Send docs"]
+    gap = fl["gaps"][0]
+    # retry turn told the model which call was rejected
+    assert any(len(f["messages"]) > 2 and "Fix or drop" in f["messages"][-1]["content"] for f in flow)
+    await b.ws.send(json.dumps({"type": "card_delete", "id": gap["card_id"]}))
+    for _ in range(30):
+        if not b.of("flow")[-1]["flow"]["gaps"]:
+            break
+        await asyncio.sleep(0.1)
+    assert b.of("flow")[-1]["flow"]["gaps"] == []
+    await b.ws.send(json.dumps({"type": "stop"}))
+    for _ in range(300):
+        if b.of("report_ready"):
+            break
+        await asyncio.sleep(0.1)
+    assert b.of("report_ready")

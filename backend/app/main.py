@@ -210,8 +210,13 @@ async def _handle_text(s, text: str):
         c = s.board.user_edit(str(m.get("id", "")), m.get("fields") or {})
         if c:
             await s.send({"type": "cards_updated", "cards": [c.public()]})
+            if c.flow_ref:
+                await s.user_gap_card_changed(c)
     elif t == "card_delete":
         cid = str(m.get("id", ""))
         if s.board.user_delete(cid):
             await s.send({"type": "card_deleted", "id": cid})
+            await s.user_gap_card_changed(None, deleted_id=cid)
+    elif t == "gap_review":
+        asyncio.create_task(s.gap_review())
     # "pong" and anything else: just keeps the connection alive

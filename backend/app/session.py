@@ -14,9 +14,11 @@ from fastapi import WebSocket
 from .audio import AudioBuffer
 from .board import Board, Card
 from .config import BYTES_PER_SEC, settings
-from .meta_api import MetaClient, image_mime
+from .flow import Flow, Result
+from .meta_api import MetaClient, ToolsUnsupported, image_mime
 from .meta_voice import VoiceStream
-from .prompts import SPARK_SCHEMA, SPARK_SYSTEM, SUMMARY_SCHEMA, SUMMARY_SYSTEM
+from .prompts import (FLOW_JSON_NOTE, FLOW_JSON_SCHEMA, FLOW_SYSTEM, FLOW_TOOLS, SPARK_SCHEMA, SPARK_SYSTEM,
+                      SUMMARY_SCHEMA, SUMMARY_SYSTEM)
 from .security import RateLimiter, clean_text
 
 log = logging.getLogger("minutecanvas.session")
@@ -24,6 +26,9 @@ log = logging.getLogger("minutecanvas.session")
 TRANSCRIPT_SNAPSHOT = 300   # turns sent in "hello" after a reconnect
 CONTEXT_LINES = 6           # already-processed lines given to Spark for continuity
 MAX_SPARK_LINES = 120       # cap per call (long meetings: only new transcript + board)
+FLOW_MAX_TURNS = 3          # agent turns per round (2nd/3rd only to fix rejected calls)
+FLOW_MAX_CALLS_PER_TURN = 20
+REVIEW_CONTEXT_LINES = 80   # gap review / final pass: recent lines shown for context
 
 
 def fmt_t(t: float) -> str:
@@ -57,6 +62,11 @@ class Session:
         self.images_made = 0
         self.image_sem = asyncio.Semaphore(settings.image_concurrency)
         self.image_tasks: set[asyncio.Task] = set()
+        self.flow = Flow()
+        self.flow_done_idx = 0
+        self.flow_calls = 0
+        self.flow_stats = {"accepted": 0, "rejected": 0, "rounds": 0}
+        self.last_gap_review = -1e9
         self.report: dict | None = None
         self.socket: WebSocket | None = None
         self.send_lock = asyncio.Lock()
@@ -101,6 +111,8 @@ class Session:
             "audio_bytes_received": self.audio.received_bytes,
             "meeting_t": round(self.meeting_t, 1),
             "board": self.board.public(),
+            "flow": self.flow.public(),
+            "flow_stats": self.flow_stats,
             "transcript": self.transcript[-TRANSCRIPT_SNAPSHOT:],
             "partials": list(self.partials.values()),
             "speakers": self.speaker_names,
@@ -247,7 +259,12 @@ class Session:
                 await self.spark_once()
 
     async def spark_once(self, final: bool = False):
+        """One round: the cards call and the Flow agent run in parallel (no extra delay)."""
         async with self.spark_lock:
+            await asyncio.gather(self._cards_round(final), self._flow_round("final" if final else "live"))
+
+    async def _cards_round(self, final: bool):
+        if True:
             end = len(self.transcript)
             new = self.transcript[self.spark_done_idx:end]
             if not new:
@@ -261,6 +278,7 @@ class Session:
                 "current_board": self.board.for_spark(),
                 "board_title": self.board.title,
                 "deleted_titles": self.board.deleted_titles[-30:],
+                "flow_steps": [st.label for st in self.flow.steps.values()][:40],
                 "earlier_lines_for_context_only": [self._line(x) for x in context],
                 "new_transcript": [self._line(x) for x in new],
                 "is_final_pass": final,
@@ -286,9 +304,192 @@ class Session:
             if ch.updated:
                 await self.send({"type": "cards_updated", "cards": [c.public() for c in ch.updated]})
             await self.send({"type": "spark_status", "state": "idle", "seconds": round(time.monotonic() - t0, 1)})
+            # a gap question answered on the board -> the gap on the Flow Map is answered too
+            gap_changed = False
+            for c in ch.updated:
+                g = self.flow.gaps.get(c.flow_ref or "")
+                if g and c.resolved and not g.resolved:
+                    g.resolved, g.answer = True, c.answer
+                    gap_changed = True
+            if gap_changed:
+                await self.send_flow([])
 
     def _line(self, x: dict) -> str:
         return f"[{fmt_t(x['t'])}] {self.speaker_name(x['speaker'])}: {x['text']}"
+
+    # ---------------- Flow Map (Spark Flow agent, tool calling) ----------------
+    async def send_flow(self, events: list[dict]):
+        await self.send({"type": "flow", "flow": self.flow.public(), "events": events, "stats": self.flow_stats})
+
+    async def gap_review(self) -> bool:
+        """The user pressed "Check gaps". Runs one review round now (cooldown protects credits)."""
+        if self.state not in ("recording", "paused") or self.flow.empty():
+            return False
+        if time.monotonic() - self.last_gap_review < settings.gap_review_cooldown_s:
+            await self.send({"type": "notice", "message": "Gap check already ran a moment ago."})
+            return False
+        self.last_gap_review = time.monotonic()
+        async with self.spark_lock:
+            await self._flow_round("gap_review")
+        return True
+
+    async def _flow_round(self, mode: str):
+        """mode: live (new lines) / gap_review (user asked) / final (after Stop)."""
+        if not settings.flow_enabled:
+            return
+        end = len(self.transcript)
+        new = self.transcript[self.flow_done_idx:end]
+        if mode == "gap_review":     # only review; unprocessed lines stay for the next live round
+            end = self.flow_done_idx
+            new = []
+        if mode == "live" and not new:
+            return
+        if mode != "live" and self.flow.empty() and not new:
+            return
+        if self.flow_calls >= settings.max_flow_calls:
+            if mode != "final":
+                await self.send({"type": "notice", "message": "Flow Map limit for this session reached."})
+            return
+        new = new[-MAX_SPARK_LINES:]
+        start = end - len(new)
+        n_ctx = CONTEXT_LINES if mode == "live" else REVIEW_CONTEXT_LINES
+        lines_all = len(self.transcript)
+        context = self.transcript[max(0, start - n_ctx):start]
+        payload = {
+            "mode": mode,
+            "current_flow": self.flow.for_agent(),
+            "earlier_lines_for_context_only": [self._line(x) for x in context],
+            "new_transcript": [self._line(x) for x in new],
+        }
+        lines = self.transcript[:lines_all]      # quotes may come from any line said so far
+        self.flow.gap_budget = 1 if mode == "live" else 2
+        self.flow_calls += 1
+        await self.send({"type": "flow_status", "state": "thinking", "mode": mode})
+        t0 = time.monotonic()
+        acc = _FlowRound()
+        try:
+            if self.meta.tools_ok:
+                try:
+                    await self._flow_tools(payload, lines, acc)
+                except ToolsUnsupported as e:
+                    log.warning("tool calling not available, Flow agent uses JSON calls: %s", e)
+                    self.meta.tools_ok = False
+            if not self.meta.tools_ok and not acc.turns:
+                await self._flow_json(payload, lines, acc)
+        except Exception as e:  # noqa: BLE001 - first turn failed: keep the lines for next round
+            log.warning("flow round failed: %s", e)
+            if not acc.turns:
+                await self.send({"type": "flow_status", "state": "error", "mode": mode})
+                return
+        self.flow_done_idx = end
+        self.flow_stats["accepted"] += acc.accepted
+        self.flow_stats["rejected"] += acc.rejected
+        self.flow_stats["rounds"] += 1
+        log.info("flow %s %.1fs: %d turns, %d accepted, %d rejected", mode, time.monotonic() - t0,
+                 acc.turns, acc.accepted, acc.rejected)
+        for c in acc.cards_added:
+            self._queue_image(c)
+        if acc.cards_added:
+            await self.send({"type": "cards_added", "cards": [c.public() for c in acc.cards_added]})
+        if acc.cards_updated:
+            await self.send({"type": "cards_updated", "cards": [c.public() for c in acc.cards_updated]})
+        if acc.events or mode != "live":
+            await self.send_flow(acc.events)
+        await self.send({"type": "flow_status", "state": "idle", "mode": mode,
+                         "seconds": round(time.monotonic() - t0, 1),
+                         "accepted": acc.accepted, "rejected": acc.rejected,
+                         "gaps": sum(1 for e in acc.events if e["kind"] == "gap")})
+
+    def _apply_flow_call(self, name, args, lines: list[dict], acc: "_FlowRound") -> dict:
+        if isinstance(args, str):
+            try:
+                args = json.loads(args or "{}")
+            except ValueError:
+                args = None
+        res: Result = self.flow.apply(name, args, lines, self.meeting_t)
+        if res.ok:
+            acc.accepted += 1
+        else:
+            acc.rejected += 1
+            log.info("flow call rejected: %s %s -> %s", name, json.dumps(args)[:200], res.message.get("error"))
+        acc.events += res.events
+        if res.new_gap:
+            g = res.new_gap
+            step = self.flow.steps.get(g.step)
+            detail = f"Gap in the flow: nobody covered this at “{step.label}”." if step else "Gap in the flow: nobody covered this."
+            card, is_new = self.board.add_gap_question(g.id, g.question, detail, self.meeting_t)
+            if card:
+                g.card_id = card.id
+                (acc.cards_added if is_new else acc.cards_updated).append(card)
+        if res.resolved_gap:
+            c = self.board.resolve_gap_question(res.resolved_gap.card_id, res.resolved_gap.answer, self.meeting_t)
+            if c and c not in acc.cards_added:
+                acc.cards_updated.append(c)
+        return res.message
+
+    async def _flow_tools(self, payload: dict, lines: list[dict], acc: "_FlowRound"):
+        messages = [{"role": "system", "content": FLOW_SYSTEM},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
+        for _ in range(FLOW_MAX_TURNS):
+            try:
+                msg = await self.meta.spark_tools(messages, FLOW_TOOLS)
+            except ToolsUnsupported:
+                raise
+            except Exception:
+                if not acc.turns:
+                    raise
+                break                      # a retry turn failed: keep what was accepted
+            acc.turns += 1
+            calls = [c for c in (msg.get("tool_calls") or []) if isinstance(c, dict)]
+            if not calls:
+                break
+            messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": calls})
+            rejected = 0
+            for k, c in enumerate(calls):
+                fn = c.get("function") or {}
+                if k < FLOW_MAX_CALLS_PER_TURN:
+                    out = self._apply_flow_call(fn.get("name"), fn.get("arguments"), lines, acc)
+                else:
+                    out = {"ok": False, "error": "too many calls in one turn; skipped"}
+                rejected += 0 if out.get("ok") else 1
+                messages.append({"role": "tool", "tool_call_id": c.get("id", f"call_{k}"),
+                                 "content": json.dumps(out, ensure_ascii=False)})
+            if not rejected:
+                break                      # all accepted: no extra turn (saves time and credits)
+
+    async def _flow_json(self, payload: dict, lines: list[dict], acc: "_FlowRound"):
+        """Fallback when the API has no tool calling: the same calls as one JSON object."""
+        user = json.dumps(payload, ensure_ascii=False)
+        history: list[dict] = []
+        for _ in range(2):
+            try:
+                out = await self.meta.spark_json(FLOW_SYSTEM + FLOW_JSON_NOTE, user, "flow_calls",
+                                                 FLOW_JSON_SCHEMA, history)
+            except Exception:
+                if not acc.turns:
+                    raise
+                break
+            acc.turns += 1
+            calls = [c for c in (out.get("calls") or []) if isinstance(c, dict)][:FLOW_MAX_CALLS_PER_TURN]
+            if not calls:
+                break
+            results = [self._apply_flow_call(c.get("name"), c.get("arguments"), lines, acc) for c in calls]
+            if all(r.get("ok") for r in results):
+                break
+            history += [{"role": "assistant", "content": json.dumps({"calls": calls}, ensure_ascii=False)},
+                        {"role": "user", "content": "Results of your calls (same order). Fix or drop the rejected ones:\n"
+                                                    + json.dumps(results, ensure_ascii=False)}]
+
+    async def user_gap_card_changed(self, c: Card | None, deleted_id: str | None = None):
+        """The user resolved / reopened / deleted a question card made from a gap."""
+        g = self.flow.gap_by_card(deleted_id or (c.id if c else ""))
+        if not g:
+            return
+        if deleted_id:
+            g.dismissed = True
+        elif c is not None and not self.flow.user_resolve_gap(g, c.resolved, self.meeting_t):
+            return
+        await self.send_flow([])
 
     # ---------------- images ----------------
     def _queue_image(self, c: Card):
@@ -336,7 +537,10 @@ class Session:
             try:
                 out = await self.meta.spark_json(
                     SUMMARY_SYSTEM,
-                    json.dumps({"board": self.board.for_spark(), "transcript": full}, ensure_ascii=False),
+                    json.dumps({"board": self.board.for_spark(), "transcript": full,
+                                "conflicts": [{"note": c.note, "a": c.a.quote, "b": c.b.quote}
+                                              for c in self.flow.contradictions.values() if not c.resolved]},
+                               ensure_ascii=False),
                     "summary", SUMMARY_SCHEMA)
                 # keep the title the board showed all meeting; the summary title is only a fallback
                 if not self.board.title:
@@ -368,6 +572,7 @@ class Session:
             "actions": [pub(c) for c in cards if c.column == "actions"],
             "open_questions": [pub(c) for c in cards if c.column == "questions" and not c.resolved],
             "answered_questions": [pub(c) for c in cards if c.column == "questions" and c.resolved],
+            "flow": self.flow.public(),
         }
 
     async def close(self):
@@ -381,6 +586,16 @@ class Session:
             await _close_quietly(self.socket)
         self.images.clear()
         self.audio.buf.clear()
+
+
+class _FlowRound:
+    def __init__(self) -> None:
+        self.turns = 0
+        self.accepted = 0
+        self.rejected = 0
+        self.events: list[dict] = []
+        self.cards_added: list[Card] = []
+        self.cards_updated: list[Card] = []
 
 
 async def _close_quietly(ws: WebSocket):

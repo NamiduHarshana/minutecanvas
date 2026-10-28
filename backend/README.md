@@ -53,9 +53,24 @@ API key only on the backend (Secret Manager) · session token as the first WS me
 4. Audio = binary frames: `[uint64 little-endian byte offset][PCM16 mono 24 kHz]`, ~100 ms each. Keep the last 60 s in the browser; after a reconnect resend from `hello.audio_bytes_received`.
 5. Server `ping` every 2 s → no message for 5 s = dead socket → reconnect.
 
-Client → server: `start` · `pause` · `resume` · `stop` · `rename_speaker {label,name}` · `card_edit {id,fields}` · `card_delete {id}`
+Client → server: `start` · `pause` · `resume` · `stop` · `rename_speaker {label,name}` · `card_edit {id,fields}` · `card_delete {id}` · `gap_review` (Flow Map "Check gaps")
 
-Server → client: `hello` · `ping` · `state` · `voice_status` · `transcript_partial` · `transcript_partial_clear` · `transcript_final` · `cards_added` · `cards_updated` · `card_deleted` · `board_title` · `speakers` · `spark_status` · `notice` · `report_ready` · `error`
+Server → client: `hello` · `ping` · `state` · `voice_status` · `transcript_partial` · `transcript_partial_clear` · `transcript_final` · `cards_added` · `cards_updated` · `card_deleted` · `board_title` · `speakers` · `spark_status` · `flow {flow,events,stats}` · `flow_status` · `notice` · `report_ready` · `error`
 
 Card: `{id, column: goals|decisions|actions|updates|questions, title, detail, owner, due, status: done|in_progress|blocked, done, resolved, answer, t, updated_t, image_url, image_status, source, user_locked}`
 Image URLs are relative (`/api/sessions/…/images/…`): fetch them with `Authorization: Bearer <token>`, then `URL.createObjectURL(blob)` (blob URLs also make PNG/PDF export work). Render all text with `textContent` only.
+
+
+## Live Flow Map (Spark Flow agent)
+
+Every Spark round runs two calls in parallel: the cards call (JSON) and the **Flow agent** (function calling).
+Tools: `add_step` · `link_steps` · `update_step` · `report_bug` · `flag_gap` · `flag_contradiction` · `resolve` (`app/prompts.py`).
+
+- **Quote check** (`app/flow.py` → `check_quote`): every tool call must quote words from one real transcript line.
+  The code finds that line; speaker and time come from the line, never from the model. A call whose quote isn't
+  in the transcript is rejected and the error goes back to the agent, which gets one more turn to fix it.
+- A flagged gap becomes a question in Open questions (`Card.flow_ref`); answering/deleting it updates the gap.
+- `gap_review` runs a review pass now (cooldown `GAP_REVIEW_COOLDOWN_S`); Stop runs a final pass.
+- If the API rejects `tools`, the agent switches to the same calls as JSON (`FLOW_JSON_SCHEMA`) automatically.
+- Settings: `FLOW_ENABLED=1`, `MAX_FLOW_CALLS=150`. `MOCK_META=1` plays a scripted sofa-shop client meeting
+  through the same quote check (one wrong quote on purpose to show reject → retry).

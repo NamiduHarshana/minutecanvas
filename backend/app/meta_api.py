@@ -23,21 +23,37 @@ class MetaAPIError(RuntimeError):
     pass
 
 
+class ToolsUnsupported(MetaAPIError):
+    """The API rejected `tools`; the Flow agent switches to the JSON fallback."""
+
+
 def _headers() -> dict:
     return {"Authorization": f"Bearer {settings.meta_api_key}", "Content-Type": "application/json"}
 
 
-def build_spark_request(system: str, user: str, schema_name: str, schema: dict, extras: bool = True) -> dict:
+def build_spark_request(system: str, user: str, schema_name: str, schema: dict, extras: bool = True,
+                        history: list[dict] | None = None) -> dict:
     """extras=False is exactly the body that passed the Oct 27 test.
-    extras=True adds reasoning_effort (faster) + strict schema; dropped automatically on HTTP 400."""
+    extras=True adds reasoning_effort (faster) + strict schema; dropped automatically on HTTP 400.
+    history: extra messages after the first user message (Flow agent JSON fallback retry turn)."""
     js = {"name": schema_name, "schema": schema if extras else plain_schema(schema)}
     body = {
         "model": settings.spark_model,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}, *(history or [])],
         "response_format": {"type": "json_schema", "json_schema": js},
     }
     if extras:
         js["strict"] = True
+        if settings.spark_reasoning:
+            body["reasoning_effort"] = settings.spark_reasoning
+    return body
+
+
+def build_tools_request(messages: list[dict], tools: list[dict], extras: bool = True) -> dict:
+    """Flow agent: OpenAI-style function calling (tools / tool_calls / role "tool")."""
+    body = {"model": settings.spark_model, "messages": messages, "tools": tools, "tool_choice": "auto"}
+    if extras:
+        body["parallel_tool_calls"] = True
         if settings.spark_reasoning:
             body["reasoning_effort"] = settings.spark_reasoning
     return body
@@ -136,16 +152,21 @@ class MetaClient:
     def __init__(self, http: httpx.AsyncClient | None = None):
         self.http = http or httpx.AsyncClient(timeout=httpx.Timeout(90.0, connect=10.0))
         self.spark_extras = True     # becomes False if the API rejects reasoning_effort/strict
+        self.tools_extras = True     # becomes False if the API rejects parallel_tool_calls/reasoning_effort
+        self.tools_ok = True         # becomes False if the API rejects `tools` -> Flow agent uses JSON calls
 
     async def aclose(self):
         await self.http.aclose()
 
-    async def spark_json(self, system: str, user: str, schema_name: str, schema: dict) -> dict:
+    async def spark_json(self, system: str, user: str, schema_name: str, schema: dict,
+                         history: list[dict] | None = None) -> dict:
         if settings.mock_meta:
+            if schema_name == "flow_calls":
+                return _mock_flow_json(user, history)
             return _mock_spark(user, schema_name)
         last = None
         for attempt in range(3):
-            body = build_spark_request(system, user, schema_name, schema, self.spark_extras)
+            body = build_spark_request(system, user, schema_name, schema, self.spark_extras, history)
             try:
                 r = await self.http.post(f"{settings.meta_api_base}/chat/completions", headers=_headers(), json=body)
                 if r.status_code == 400 and self.spark_extras:
@@ -162,6 +183,34 @@ class MetaClient:
             except (MetaAPIError, httpx.HTTPError, KeyError, ValueError) as e:
                 last = e
                 log.warning("spark attempt %d failed: %s", attempt + 1, e)
+        raise MetaAPIError(str(last))
+
+    async def spark_tools(self, messages: list[dict], tools: list[dict]) -> dict:
+        """One agent turn. Returns the assistant message ({"content":..., "tool_calls":[...]})."""
+        if settings.mock_meta:
+            return _mock_flow(messages)
+        last = None
+        for attempt in range(3):
+            body = build_tools_request(messages, tools, self.tools_extras)
+            try:
+                r = await self.http.post(f"{settings.meta_api_base}/chat/completions", headers=_headers(), json=body)
+                if r.status_code == 400:
+                    if self.tools_extras:
+                        log.warning("tools call rejected, retrying without parallel_tool_calls/reasoning_effort: %s", r.text[:300])
+                        self.tools_extras = False
+                        continue
+                    raise ToolsUnsupported(f"tools HTTP 400: {r.text[:300]}")
+                if r.status_code >= 400:
+                    raise MetaAPIError(f"tools HTTP {r.status_code}: {r.text[:300]}")
+                msg = r.json()["choices"][0]["message"]
+                if not isinstance(msg, dict):
+                    raise ValueError("no message")
+                return msg
+            except ToolsUnsupported:
+                raise
+            except (MetaAPIError, httpx.HTTPError, KeyError, IndexError, ValueError) as e:
+                last = e
+                log.warning("tools attempt %d failed: %s", attempt + 1, e)
         raise MetaAPIError(str(last))
 
     async def image(self, prompt: str) -> bytes:
@@ -211,3 +260,13 @@ def _mock_image() -> bytes:
     return base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
     )
+
+
+def _mock_flow(messages: list[dict]) -> dict:
+    from .mock_script import mock_flow
+    return mock_flow(messages)
+
+
+def _mock_flow_json(user: str, history: list[dict] | None) -> dict:
+    from .mock_script import mock_flow_json
+    return mock_flow_json(user, history)

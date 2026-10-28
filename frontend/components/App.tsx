@@ -1,8 +1,8 @@
 "use client";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { LoaderCircle, Mic, MonitorSpeaker, PanelRightOpen, X } from "lucide-react";
-import type { AudioSource, Card, ClientMsg } from "@/core/types";
+import { CircleHelp, LoaderCircle, Mic, MonitorSpeaker, PanelRightOpen, Presentation, TriangleAlert, X } from "lucide-react";
+import type { AudioSource, Card, ClientMsg, FlowEvent } from "@/core/types";
 import { AudioCapture, CaptureError, tabAudioSupported } from "@/core/audio";
 import { ApiError, MeetingClient, StoredSession, checkStored, clearStored, createSession, loadStored } from "@/core/client";
 import { initialState, orderedCards, reducer } from "@/core/store";
@@ -10,13 +10,13 @@ import { preloadImages, setImageFetcher } from "@/core/images";
 import { exportPng, exportSinglePdf, nextFrames, safeName } from "@/core/export";
 import { Setup, SetupValues } from "./Setup";
 import { TopBar } from "./TopBar";
-import { Board, CardActions, Latest } from "./Board";
+import { Board, CardActions } from "./Board";
 import { CardModal } from "./CardModal";
 import { Sidebar } from "./Sidebar";
 import { Report } from "./Report";
 import { ExportSheet } from "./ExportSheet";
 import { ChainStrip } from "./ChainStrip";
-import { SparkFeed } from "./SparkFeed";
+import { FlowMap, FlowFocus } from "./FlowMap";
 
 type EditFields = Extract<ClientMsg, { type: "card_edit" }>["fields"];
 const SOURCE_LABEL: Record<AudioSource, string> = { mic: "Mic", mic_tab: "Mic + Tab" };
@@ -41,10 +41,12 @@ export default function App() {
   const [showSidebar, setShowSidebar] = useState(true);
   const [modal, setModal] = useState<{ id: string; edit: boolean } | null>(null);
   const [exporting, setExporting] = useState<"png" | "pdf" | null>(null);
+  const [flowFocus, setFlowFocus] = useState<FlowFocus | null>(null);
   const clientRef = useRef<MeetingClient | null>(null);
   const audioRef = useRef<AudioCapture | null>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const shownReport = useRef(false);
+  const [reportReady, setReportReady] = useState(false);   // banner on the board instead of jumping away
 
   const cards = useMemo(() => orderedCards(state), [state]);
   const questions = useMemo(() => cards.filter((c) => c.column === "questions"), [cards]);
@@ -111,6 +113,7 @@ export default function App() {
     }
     dispatch({ type: "reset" });
     shownReport.current = false;
+    setReportReady(false);
     setSource(v.source);
     const client = startClient(s);
     attachAudio(audio, client);
@@ -124,6 +127,7 @@ export default function App() {
     if (!s) return;
     dispatch({ type: "reset" });
     shownReport.current = false;
+    setReportReady(false);
     startClient(s);
     setView("board");
     setPhase("meeting");
@@ -156,9 +160,11 @@ export default function App() {
       audioRef.current?.close();
       audioRef.current = null;
     }
+    // stay on the board: the final Muse Spark pass may have just added gaps/conflicts to the Flow Map,
+    // and that is the moment worth seeing. The report opens from the banner when the user wants it.
     if (state.report && !shownReport.current) {
       shownReport.current = true;
-      setView("report");
+      setReportReady(true);
     }
   }, [state.serverState, state.report]);
 
@@ -195,7 +201,15 @@ export default function App() {
   const clock = useCallback(() => clientRef.current?.meetingSeconds() ?? 0, []);
   const level = useCallback(() => audioRef.current?.level ?? 0, []);
   const send = (m: ClientMsg) => clientRef.current?.send(m);
-  const dismissActivity = useCallback((id: number) => dispatch({ type: "dismissActivity", id }), []);
+  const focusFlow = useCallback((kind: FlowFocus["kind"], id: string) => setFlowFocus((f) => ({ kind, id, n: (f?.n ?? 0) + 1 })), []);
+  const openFlowEvent = useCallback(
+    (e: FlowEvent) => {
+      if (e.kind === "gap" || e.kind === "gap_resolved") focusFlow("gap", e.id);
+      else if (e.kind === "contradiction" || e.kind === "contradiction_resolved") focusFlow("conflict", e.id);
+      else if (e.step) focusFlow("step", e.step);
+    },
+    [focusFlow],
+  );
 
   function onStop() {
     if (!window.confirm("Stop the meeting? Recording ends and the report is built.")) return;
@@ -275,8 +289,29 @@ export default function App() {
       />
       <main className="main">
         {state.serverState === "paused" && <div className="paused-bar">Paused — nothing is being transcribed. Press Resume to continue.</div>}
+        {state.serverState === "stopping" && <FinishingBar step={state.stopStep} />}
+        {reportReady && state.report && view === "board" && (
+          <ReportBanner
+            gaps={state.flow ? state.flow.gaps.filter((g) => !g.resolved && !g.dismissed).length : 0}
+            conflicts={state.flow ? state.flow.contradictions.filter((c) => !c.resolved).length : 0}
+            onOpen={() => setView("report")}
+            onClose={() => setReportReady(false)}
+          />
+        )}
         {(live || state.serverState === "stopping") && <ChainStrip state={state} />}
-        <Latest cards={cards} actions={actions} flash={state.flash} />
+        {state.flow && state.flow.steps.length > 0 && (
+          <FlowMap
+            flow={state.flow}
+            stats={state.flowStats}
+            status={state.flowStatus}
+            flash={state.flowFlash}
+            speakers={state.speakers}
+            live={live}
+            focus={flowFocus}
+            onCheckGaps={() => send({ type: "gap_review" })}
+            onOpenCard={(id) => setModal({ id, edit: false })}
+          />
+        )}
         <Board state={state} cards={cards} actions={actions} readOnly={readOnly} />
       </main>
       {showSidebar ? (
@@ -287,11 +322,12 @@ export default function App() {
           onHide={() => setShowSidebar(false)}
           onRename={(label, name) => send({ type: "rename_speaker", label, name })}
           onOpenCard={(id) => setModal({ id, edit: false })}
+          onOpenFlow={openFlowEvent}
           onResolve={(q) => send({ type: "card_edit", id: q.id, fields: { resolved: true } })}
         />
       ) : (
         <button className="show-sidebar btn" onClick={() => setShowSidebar(true)}>
-          <PanelRightOpen size={15} aria-hidden /> Transcript
+          <PanelRightOpen size={15} aria-hidden /> Panel
         </button>
       )}
 
@@ -310,27 +346,11 @@ export default function App() {
               setModal(null);
             }
           }}
+          onShowFlow={(gapId) => {
+            setModal(null);
+            focusFlow("gap", gapId);
+          }}
         />
-      )}
-
-      {state.serverState === "stopping" && (
-        <div className="overlay">
-          <div className="finishing" role="status">
-            <h2>Building your report</h2>
-            <ol>
-              {STEPS.map((s, k) => {
-                const cur = STEPS.findIndex((x) => x.key === state.stopStep);
-                const st = k < cur ? "done" : k === cur ? "now" : "todo";
-                return (
-                  <li key={s.key} className={st}>
-                    {st === "now" ? <LoaderCircle size={16} className="spin" aria-hidden /> : <span className="step-dot" />}
-                    {s.label}
-                  </li>
-                );
-              })}
-            </ol>
-          </div>
-        </div>
       )}
 
       {needMic && !fatal && (
@@ -365,7 +385,6 @@ export default function App() {
         </div>
       )}
 
-      <SparkFeed items={state.activity} onOpen={(id) => setModal({ id, edit: false })} onDismiss={dismissActivity} />
 
       <div className="toasts" aria-live="polite">
         {state.toasts.map((t) => (
@@ -381,10 +400,56 @@ export default function App() {
       {exporting &&
         createPortal(
           <div className="offscreen" ref={sheetRef} aria-hidden>
-            <ExportSheet title={state.title} cards={cards} meetingT={clock()} />
+            <ExportSheet title={state.title} cards={cards} meetingT={clock()} flow={state.flow} />
           </div>,
           document.body,
         )}
+    </div>
+  );
+}
+
+/** After Stop: a slim progress line on the board (the board stays visible for the final Flow Map pass). */
+function FinishingBar({ step }: { step: string | null }) {
+  const cur = STEPS.findIndex((x) => x.key === step);
+  return (
+    <div className="finish-bar" role="status">
+      <LoaderCircle size={15} className="spin" aria-hidden />
+      <b>Finishing</b>
+      <ol>
+        {STEPS.map((s, k) => (
+          <li key={s.key} className={k < cur ? "done" : k === cur ? "now" : "todo"}>
+            {s.label}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function ReportBanner({ gaps, conflicts, onOpen, onClose }: { gaps: number; conflicts: number; onOpen: () => void; onClose: () => void }) {
+  const found: string[] = [];
+  if (gaps) found.push(`${gaps} gap${gaps > 1 ? "s" : ""} nobody covered`);
+  if (conflicts) found.push(`${conflicts} conflict${conflicts > 1 ? "s" : ""}`);
+  return (
+    <div className="report-banner" role="status">
+      <span className="rb-text">
+        <b>Meeting ended. The report is ready.</b>
+        {found.length > 0 ? (
+          <span className="rb-found">
+            {gaps > 0 && <CircleHelp size={14} aria-hidden />}
+            {gaps === 0 && conflicts > 0 && <TriangleAlert size={14} aria-hidden />}
+            Muse Spark’s final check: {found.join(" · ")}
+          </span>
+        ) : (
+          <span className="rb-found muted">Muse Spark’s final check found no open gaps.</span>
+        )}
+      </span>
+      <button className="btn btn-primary" onClick={onOpen}>
+        <Presentation size={15} aria-hidden /> Open report
+      </button>
+      <button className="icon-btn" onClick={onClose} aria-label="Hide">
+        <X size={16} aria-hidden />
+      </button>
     </div>
   );
 }

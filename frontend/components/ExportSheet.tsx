@@ -1,12 +1,13 @@
 "use client";
-import type { Card } from "@/core/types";
+import type { Card, FlowData } from "@/core/types";
 import { COLUMNS, COLUMN_META } from "@/core/types";
 import { fmtTime } from "@/core/store";
 import { CardMeta, ColumnIcon, Illus } from "./ui";
 import { Logo } from "./Logo";
+import { FlowDiagram } from "./FlowDiagram";
 
 /** Clean full board for PNG/PDF export (no scroll limits, no buttons). */
-export function ExportSheet({ title, cards, meetingT }: { title: string | null; cards: Card[]; meetingT: number }) {
+export function ExportSheet({ title, cards, meetingT, flow }: { title: string | null; cards: Card[]; meetingT: number; flow?: FlowData | null }) {
   const date = new Date().toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
   return (
     <div className="sheet">
@@ -17,6 +18,12 @@ export function ExportSheet({ title, cards, meetingT }: { title: string | null; 
           {date} · {fmtTime(meetingT)}
         </span>
       </div>
+      {flow && flow.steps.length > 0 && (
+        <div className="sheet-flow">
+          <h2>Flow map</h2>
+          <FlowDiagram flow={flow} className="sheet-flow-svg" box={{ w: 1500, h: 520 }} />
+        </div>
+      )}
       <div className="sheet-cols">
         {COLUMNS.map((col) => {
           const list = cards.filter((c) => c.column === col);

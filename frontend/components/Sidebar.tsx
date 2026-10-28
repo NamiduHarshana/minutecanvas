@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Check, CircleHelp, PanelRightClose, Pencil } from "lucide-react";
-import type { Card } from "@/core/types";
+import { Check, GitBranch, PanelRightClose, Pencil, Sparkles } from "lucide-react";
+import type { Card, FlowEvent } from "@/core/types";
+import { SparkFeed } from "./SparkFeed";
 import type { MeetingState } from "@/core/store";
 import { fmtTime, speakerName } from "@/core/store";
 
@@ -20,6 +21,7 @@ export function Sidebar({
   onHide,
   onRename,
   onOpenCard,
+  onOpenFlow,
   onResolve,
 }: {
   state: MeetingState;
@@ -28,23 +30,43 @@ export function Sidebar({
   onHide: () => void;
   onRename: (label: string, name: string) => void;
   onOpenCard: (id: string) => void;
+  onOpenFlow: (e: FlowEvent) => void;
   onResolve: (c: Card) => void;
 }) {
   const open = questions.filter((q) => !q.resolved);
+  const [tab, setTab] = useState<"transcript" | "questions">("transcript");
+  // a new open question shows a dot on its tab until the tab is opened
+  const [seen, setSeen] = useState(0);
+  useEffect(() => {
+    if (tab === "questions") setSeen(open.length);
+  }, [tab, open.length]);
+  const unseen = tab !== "questions" && open.length > seen;
   return (
     <aside className="sidebar">
-      <Transcript state={state} readOnly={readOnly} onHide={onHide} onRename={onRename} />
-      <section className="oq">
-        <div className="panel-head">
-          <h2>
-            <CircleHelp size={15} aria-hidden /> Open questions <span className="count">{open.length}</span>
-          </h2>
-        </div>
+      <div className="side-tabs" role="tablist">
+        <button role="tab" aria-selected={tab === "transcript"} className={tab === "transcript" ? "on" : ""} onClick={() => setTab("transcript")}>
+          Transcript
+        </button>
+        <button role="tab" aria-selected={tab === "questions"} className={tab === "questions" ? "on" : ""} onClick={() => setTab("questions")}>
+          Open questions <span className={`count ${unseen ? "new" : ""}`}>{open.length}</span>
+        </button>
+        <button className="icon-btn" onClick={onHide} aria-label="Hide panel" title="Hide panel">
+          <PanelRightClose size={16} aria-hidden />
+        </button>
+      </div>
+      {tab === "transcript" ? (
+        <Transcript state={state} readOnly={readOnly} onRename={onRename} />
+      ) : (
         <div className="oq-list">
           {open.length === 0 && <p className="muted small">No open questions.</p>}
           {open.map((q) => (
             <div key={q.id} className={`oq-item ${state.flash[q.id] ? "flash" : ""}`}>
               <button className="oq-title" onClick={() => onOpenCard(q.id)}>
+                {q.flow_ref && (
+                  <span className="gap-tag" title="Found by the Flow Map: nobody covered this">
+                    <GitBranch size={11} aria-hidden /> Gap
+                  </span>
+                )}
                 {q.title}
               </button>
               {!readOnly && (
@@ -55,6 +77,14 @@ export function Sidebar({
             </div>
           ))}
         </div>
+      )}
+      <section className="spark-log">
+        <div className="panel-head">
+          <h2>
+            <Sparkles size={14} aria-hidden /> Muse Spark found
+          </h2>
+        </div>
+        <SparkFeed items={state.activity} onOpen={onOpenCard} onOpenFlow={onOpenFlow} />
       </section>
     </aside>
   );
@@ -63,12 +93,10 @@ export function Sidebar({
 function Transcript({
   state,
   readOnly,
-  onHide,
   onRename,
 }: {
   state: MeetingState;
   readOnly: boolean;
-  onHide: () => void;
   onRename: (label: string, name: string) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -92,12 +120,6 @@ function Transcript({
 
   return (
     <section className="transcript">
-      <div className="panel-head">
-        <h2>Transcript</h2>
-        <button className="icon-btn" onClick={onHide} aria-label="Hide transcript" title="Hide transcript">
-          <PanelRightClose size={16} aria-hidden />
-        </button>
-      </div>
       <div className="tr-lines" ref={box} onScroll={onScroll} aria-live="polite">
         {state.transcript.length === 0 && partials.length === 0 && (
           <p className="muted small tr-empty">{state.serverState === "paused" ? "Paused." : "Waiting for someone to speak…"}</p>

@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
-import { AudioLines, Mic, MonitorSpeaker, ShieldCheck } from "lucide-react";
+import { AudioLines, CircleCheckBig, Copy, Mic, MicOff, MonitorSpeaker, ShieldCheck } from "lucide-react";
 import type { AudioSource } from "@/core/types";
-import { tabAudioSupported } from "@/core/audio";
+import { micPermission, requestMic, tabAudioSupported, type MicPermission } from "@/core/audio";
 import { Logo } from "./Logo";
 
 export interface SetupValues {
@@ -13,6 +13,11 @@ export interface SetupValues {
 }
 
 const LS_KEY = "minutecanvas.setup";
+
+// for the Meet / Zoom chat, so people hear about it before recording starts
+const NOTICE =
+  "Heads-up: I'm using MinuteCanvas to take live notes of this meeting. " +
+  "What we say is transcribed live by Meta's AI. MinuteCanvas does not store the audio. Tell me if you'd rather I didn't.";
 
 export function Setup({
   busy,
@@ -33,6 +38,42 @@ export function Setup({
   const [source, setSource] = useState<AudioSource>("mic");
   const [noticed, setNoticed] = useState(false);
   const [tabOk, setTabOk] = useState(true);
+  const [mic, setMic] = useState<MicPermission>("unknown");
+  const [asking, setAsking] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function copyNotice() {
+    try {
+      await navigator.clipboard.writeText(NOTICE);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      window.prompt("Copy this notice:", NOTICE);
+    }
+  }
+
+  // know the mic permission up front, and follow changes made from the address bar
+  useEffect(() => {
+    let stop = () => {};
+    micPermission().then((p) => setMic(p));
+    navigator.permissions
+      ?.query({ name: "microphone" as PermissionName })
+      .then((st) => {
+        const on = () => setMic(st.state as MicPermission);
+        st.addEventListener("change", on);
+        stop = () => st.removeEventListener("change", on);
+      })
+      .catch(() => {});
+    return () => stop();
+  }, []);
+
+  async function allowMic() {
+    setAsking(true);
+    setMic(await requestMic());
+    setAsking(false);
+  }
+  // Start can't stop for a mic prompt: Chrome would already be showing the tab picker / the shared tab
+  const micReady = mic === "granted" || mic === "unknown";
 
   useEffect(() => {
     setTabOk(tabAudioSupported());
@@ -48,7 +89,7 @@ export function Setup({
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!noticed || busy) return;
+    if (!noticed || busy || !micReady) return;
     const src = source === "mic_tab" && !tabOk ? "mic" : source;
     try {
       localStorage.setItem(LS_KEY, JSON.stringify({ keywords, accessCode, source: src }));
@@ -122,8 +163,21 @@ export function Setup({
               </button>
             </div>
             {source === "mic_tab" && tabOk && (
-              <small>Next, pick the meeting tab and turn on “Also share tab audio”. Use headphones so the mic doesn’t pick up the speakers.</small>
+              <small>Next, pick the meeting tab and turn on “Also share tab audio”. MinuteCanvas stays on screen. Use headphones so the mic doesn’t pick up the speakers.</small>
             )}
+            {mic === "granted" ? (
+              <span className="mic-state ok">
+                <CircleCheckBig size={14} aria-hidden /> Microphone allowed
+              </span>
+            ) : mic === "denied" ? (
+              <span className="mic-state bad">
+                <MicOff size={14} aria-hidden /> Microphone is blocked. Allow it from the icon in the address bar.
+              </span>
+            ) : mic === "prompt" ? (
+              <button type="button" className="btn mic-allow" onClick={allowMic} disabled={asking}>
+                <Mic size={15} aria-hidden /> {asking ? "Waiting for your answer…" : "Allow microphone"}
+              </button>
+            ) : null}
           </fieldset>
 
           <label className="field">
@@ -140,6 +194,10 @@ export function Setup({
               </small>
             </span>
           </label>
+          <button type="button" className="btn copy-notice" onClick={copyNotice}>
+            {copied ? <CircleCheckBig size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
+            {copied ? "Copied — paste it in the meeting chat" : "Copy notice for the meeting chat"}
+          </button>
 
           {error && (
             <p className="form-error" role="alert">
@@ -147,7 +205,7 @@ export function Setup({
             </p>
           )}
 
-          <button type="submit" className="btn btn-primary btn-lg" disabled={!noticed || busy}>
+          <button type="submit" className="btn btn-primary btn-lg" disabled={!noticed || busy || !micReady}>
             <AudioLines size={18} aria-hidden />
             {busy ? "Starting…" : "Start recording"}
           </button>

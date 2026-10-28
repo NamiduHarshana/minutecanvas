@@ -67,6 +67,9 @@ class Settings:
     max_session_minutes: int = field(default_factory=lambda: _int("MAX_SESSION_MINUTES", 180))
     max_spark_calls: int = field(default_factory=lambda: _int("MAX_SPARK_CALLS", 150))
     max_images: int = field(default_factory=lambda: _int("MAX_IMAGES", 40))
+    max_flow_calls: int = field(default_factory=lambda: _int("MAX_FLOW_CALLS", 150))   # Flow agent rounds
+    flow_enabled: bool = field(default_factory=lambda: _env("FLOW_ENABLED", "1") != "0")
+    gap_review_cooldown_s: float = field(default_factory=lambda: _float("GAP_REVIEW_COOLDOWN_S", 30.0))
     image_concurrency: int = field(default_factory=lambda: _int("IMAGE_CONCURRENCY", 2))
     session_ttl_minutes: int = field(default_factory=lambda: _int("SESSION_TTL_MINUTES", 240))
 

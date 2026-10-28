@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Check, EllipsisVertical, Pencil, Sparkles, Trash2 } from "lucide-react";
+import { Check, EllipsisVertical, GitBranch, Pencil, Sparkles, Trash2 } from "lucide-react";
 import type { Card } from "@/core/types";
 import { COLUMNS, COLUMN_META } from "@/core/types";
 import type { Flash, MeetingState } from "@/core/store";
@@ -39,16 +39,18 @@ export function Latest({ cards, actions, flash }: { cards: Card[]; actions: Card
               tabIndex={0}
               onKeyDown={(e) => e.key === "Enter" && actions.open(c.id)}
             >
-              <div className="lc-top">
-                <TypeChip card={c} />
-                {i === 0 && <span className="badge-new">New</span>}
-                {flash[c.id] && <span className="badge-upd">{FLASH_TEXT[flash[c.id].kind]}</span>}
-              </div>
               <Illus card={c} className="lc-illus" eager />
-              <h3 className="lc-title">{c.title}</h3>
-              {c.detail && <p className="lc-detail">{c.detail}</p>}
-              {c.column === "questions" && c.resolved && c.answer && <p className="lc-answer">{c.answer}</p>}
-              <CardMeta card={c} />
+              <div className="lc-body">
+                <div className="lc-top">
+                  <TypeChip card={c} />
+                  {i === 0 && <span className="badge-new">New</span>}
+                  {flash[c.id] && <span className="badge-upd">{FLASH_TEXT[flash[c.id].kind]}</span>}
+                </div>
+                <h3 className="lc-title">{c.title}</h3>
+                {c.detail && <p className="lc-detail">{c.detail}</p>}
+                {c.column === "questions" && c.resolved && c.answer && <p className="lc-answer">{c.answer}</p>}
+                <CardMeta card={c} />
+              </div>
             </article>
           ))}
         </div>
@@ -101,6 +103,10 @@ export function Board({
   );
 }
 
+function hasMeta(c: Card): boolean {
+  return (c.column === "updates" && !!c.status) || (c.column === "questions" && c.resolved) || !!c.owner || !!c.due;
+}
+
 function SmallCard({
   card: c,
   isNew,
@@ -135,6 +141,11 @@ function SmallCard({
       title={`Said at ${fmtTime(c.t)}`}
     >
       <Illus card={c} className="sc-illus" />
+      {(flash || isNew) && (
+        <span className="sc-flag">
+          {flash ? <span className="badge-upd">{FLASH_TEXT[flash.kind]}</span> : <span className="badge-new">New</span>}
+        </span>
+      )}
       <div className="sc-body">
         <div className="sc-title-row">
           {c.column === "actions" && (
@@ -150,14 +161,20 @@ function SmallCard({
               {c.done && <Check size={12} strokeWidth={3} aria-hidden />}
             </button>
           )}
-          <h4 className="sc-title">{c.title}</h4>
+          <h4 className="sc-title" title={c.title}>
+            {c.title}
+          </h4>
+          {c.flow_ref && (
+            <span className="sc-gap" title="Found by the Flow Map: nobody covered this" aria-label="Flow gap">
+              <GitBranch size={12} aria-hidden />
+            </span>
+          )}
         </div>
-        <CardMeta card={c} />
-        {(isNew || flash) && (
-          <div className="sc-badges">
-            {isNew && <span className="badge-new">New</span>}
-            {flash && <span className="badge-upd">{FLASH_TEXT[flash.kind]}</span>}
-          </div>
+        {/* one line only: owner / due / status when there are any, otherwise the detail */}
+        {hasMeta(c) ? (
+          <CardMeta card={c} />
+        ) : (
+          (answered && c.answer ? c.answer : c.detail) && <p className="sc-line">{answered && c.answer ? c.answer : c.detail}</p>
         )}
       </div>
       {!readOnly && (

@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "@fontsource-variable/inter";
+import "@xyflow/react/dist/style.css";
 import "./globals.css";
 
 export const metadata: Metadata = {

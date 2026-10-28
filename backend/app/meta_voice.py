@@ -20,6 +20,7 @@ import websockets
 
 from .audio import AudioBuffer
 from .config import BYTES_PER_SEC, settings
+from .mock_script import MOCK_LINES
 
 log = logging.getLogger("minutecanvas.voice")
 DEBUG_VOICE = os.environ.get("DEBUG_VOICE") == "1"
@@ -233,8 +234,7 @@ class VoiceStream:
             await asyncio.sleep(3)
             self.audio.take(10 * BYTES_PER_SEC)
             n += 1
-            sp = "A" if n % 2 else "B"
-            await self.on_event("partial", self._label({"text": "This is a mock", "speaker": sp, "turn": str(n)}))
-            await self.on_event("final", self._label({
-                "text": f"This is mock sentence {n} about the login API and the payment screen.", "speaker": sp, "turn": str(n)}))
+            sp, text = MOCK_LINES[(n - 1) % len(MOCK_LINES)]     # scripted client meeting (sofa shop app)
+            await self.on_event("partial", self._label({"text": text[:20], "speaker": sp, "turn": str(n)}))
+            await self.on_event("final", self._label({"text": text, "speaker": sp, "turn": str(n)}))
         return True

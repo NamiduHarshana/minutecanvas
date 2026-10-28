@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { CalendarDays, Check, CircleCheckBig, Clock, ListChecks, Users } from "lucide-react";
-import type { Card, Column, Report } from "@/core/types";
-import { COLUMNS, COLUMN_META } from "@/core/types";
+import { Bug, CalendarDays, Check, CircleCheckBig, CircleHelp, Clock, GitBranch, ListChecks, ShieldCheck, TriangleAlert, Users } from "lucide-react";
+import type { Card, Column, Evidence, FlowBug, FlowContradiction, FlowGap, Report } from "@/core/types";
+import { COLUMN_META } from "@/core/types";
 import { useImage } from "@/core/images";
 import { fmtTime } from "@/core/store";
 import { ColumnIcon, Illus, StatusBadge } from "./ui";
 import { Logo } from "./Logo";
+import { FlowDiagram } from "./FlowDiagram";
 
 const GRID_PER_PAGE = 6;
 const ROWS_PER_PAGE = 6;
@@ -17,10 +18,19 @@ type GridSection = { column: Column; title: string; cards: Card[] };
 export type Slide =
   | { kind: "cover" }
   | { kind: "takeaways" }
-  | { kind: "timeline" }
   | { kind: "grid"; section: GridSection; items: Card[]; page: number; pages: number }
   | { kind: "next"; groups: OwnerGroup[]; page: number; pages: number }
-  | { kind: "answered"; items: Card[]; page: number; pages: number };
+  | { kind: "answered"; items: Card[]; page: number; pages: number }
+  | { kind: "flow" }
+  | { kind: "gaps"; gaps: FlowGap[]; bugs: FlowBug[]; conflicts: FlowContradiction[]; page: number; pages: number };
+
+const GAPS_PER_PAGE = 4;
+const CONFLICTS_PER_PAGE = 2;
+
+/** Open Flow Map gaps (their question cards are shown on the gaps slide, not in Open questions). */
+export function openGaps(r: Report): FlowGap[] {
+  return (r.flow?.gaps || []).filter((g) => !g.resolved && !g.dismissed);
+}
 
 interface OwnerGroup {
   owner: string;
@@ -38,10 +48,29 @@ export function allCards(r: Report): Card[] {
   return [...r.goals, ...r.decisions, ...r.actions, ...r.updates, ...r.open_questions, ...(r.answered_questions || [])];
 }
 
-/** Cover → Key takeaways → Timeline (3+ items) → Goals → Team updates → Decisions → Next steps → Open questions → Answered. Empty sections are skipped. */
+/** Cover → Key takeaways → Flow map → Gaps & conflicts → Goals → Team updates → Decisions → Next steps → Open questions → Answered. Empty sections are skipped. */
 export function buildSlides(r: Report): Slide[] {
   const out: Slide[] = [{ kind: "cover" }, { kind: "takeaways" }];
-  if (allCards(r).length >= 3) out.push({ kind: "timeline" }); // 1–2 dots on an empty chart says nothing
+  const flow = r.flow;
+  if (flow && flow.steps.length >= 2) out.push({ kind: "flow" });
+  if (flow) {
+    const gaps = openGaps(r);
+    const bugs = flow.bugs.filter((b) => !b.fixed);
+    const conflicts = flow.contradictions.filter((c) => !c.resolved);
+    const left = [...gaps.map((g) => ({ g })), ...bugs.map((b) => ({ b }))];
+    const pages = Math.max(Math.ceil(left.length / GAPS_PER_PAGE), Math.ceil(conflicts.length / CONFLICTS_PER_PAGE));
+    for (let k = 0; k < pages; k++) {
+      const l = left.slice(k * GAPS_PER_PAGE, (k + 1) * GAPS_PER_PAGE);
+      out.push({
+        kind: "gaps",
+        gaps: l.flatMap((x) => ("g" in x ? [x.g] : [])),
+        bugs: l.flatMap((x) => ("b" in x ? [x.b] : [])),
+        conflicts: conflicts.slice(k * CONFLICTS_PER_PAGE, (k + 1) * CONFLICTS_PER_PAGE),
+        page: k + 1,
+        pages,
+      });
+    }
+  }
   const grid = (column: Column, title: string, cards: Card[]) => {
     // balanced pages: 8 cards → 4 + 4, not 6 + 2
     const n = Math.ceil(cards.length / GRID_PER_PAGE);
@@ -65,7 +94,8 @@ export function buildSlides(r: Report): Slide[] {
   const nextPages = chunk(cols, Math.ceil(cols.length / Math.max(1, nPages)));
   nextPages.forEach((groups, k) => out.push({ kind: "next", groups, page: k + 1, pages: nextPages.length }));
 
-  grid("questions", "Open questions", r.open_questions);
+  const gapCards = new Set(openGaps(r).map((g) => g.card_id));
+  grid("questions", "Open questions", r.open_questions.filter((q) => !gapCards.has(q.id)));
   const answered = chunk(r.answered_questions || [], ROWS_PER_PAGE);
   answered.forEach((items, k) => out.push({ kind: "answered", items, page: k + 1, pages: answered.length }));
   return out;
@@ -90,14 +120,16 @@ export function SlideView({ slide, report }: { slide: Slide; report: Report }) {
       return <CoverSlide report={report} />;
     case "takeaways":
       return <TakeawaysSlide report={report} />;
-    case "timeline":
-      return <TimelineSlide report={report} />;
     case "grid":
       return <GridSlide slide={slide} />;
     case "next":
       return <NextStepsSlide slide={slide} />;
     case "answered":
       return <AnsweredSlide slide={slide} />;
+    case "flow":
+      return <FlowSlide report={report} />;
+    case "gaps":
+      return <GapsSlide slide={slide} report={report} />;
   }
 }
 
@@ -170,13 +202,16 @@ function TakeawaysSlide({ report }: { report: Report }) {
     };
   }, []);
   const answered = report.answered_questions?.length || 0;
-  const stats: [Column, string, number][] = [
+  const gaps = openGaps(report);
+  const gapCards = new Set(gaps.map((g) => g.card_id));
+  const stats: [Column | "gaps", string, number][] = [
     ["goals", "Goals", report.goals.length],
     ["decisions", "Decisions", report.decisions.length],
     ["actions", "Action items", report.actions.length],
     ["updates", "Team updates", report.updates.length],
-    ["questions", answered ? `Open · ${answered} answered` : "Open questions", report.open_questions.length],
+    ["questions", answered ? `Open · ${answered} answered` : "Open questions", report.open_questions.filter((q) => !gapCards.has(q.id)).length],
   ];
+  if (report.flow?.steps.length) stats.push(["gaps", "Gaps nobody covered", gaps.length]);
   return (
     <div className="slide">
       <SlideHead title="Key takeaways" />
@@ -200,104 +235,18 @@ function TakeawaysSlide({ report }: { report: Report }) {
         </div>
         <div className="take-stats">
           {stats.map(([col, label, n]) => (
-            <div key={col} className="stat" style={{ "--col": COLUMN_META[col].color, "--soft": COLUMN_META[col].soft } as React.CSSProperties}>
-              <span className="stat-icon">
-                <ColumnIcon column={col} size={18} />
-              </span>
+            <div
+              key={col}
+              className="stat"
+              style={(col === "gaps" ? { "--col": "#b45309", "--soft": "#fff7e8" } : { "--col": COLUMN_META[col].color, "--soft": COLUMN_META[col].soft }) as React.CSSProperties}
+            >
+              <span className="stat-icon">{col === "gaps" ? <GitBranch size={18} aria-hidden /> : <ColumnIcon column={col} size={18} />}</span>
               <b>{n}</b>
               <span>{label}</span>
             </div>
           ))}
         </div>
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- timeline
-const LANE_H = 92;
-const TRACK_W = 940;
-const DOT = 44;
-
-function niceStep(total: number) {
-  for (const s of [15, 30, 60, 120, 300, 600, 900, 1800, 3600]) if (total / s <= 8) return s;
-  return 3600;
-}
-
-function TimelineSlide({ report }: { report: Report }) {
-  const cards = allCards(report);
-  const end = Math.max(1, report.duration_s, ...cards.map((c) => Math.max(c.t, c.updated_t ?? 0)));
-  const x = (t: number) => (Math.min(Math.max(t, 0), end) / end) * TRACK_W;
-  const step = niceStep(end);
-  const ticks: number[] = [];
-  for (let t = 0; t <= end + 0.01; t += step) ticks.push(t);
-
-  return (
-    <div className="slide">
-      <SlideHead title="Meeting timeline" sub={`When each item came up · ${fmtTime(report.duration_s)} total`} />
-      <div className="tl">
-        {COLUMNS.map((col) => {
-          const lane = cards.filter((c) => c.column === col).sort((a, b) => a.t - b.t);
-          const m = COLUMN_META[col];
-          // two sub-rows so close items don't cover each other
-          let lastTop = -1e9;
-          let lastBottom = -1e9;
-          const placed = lane.map((c) => {
-            const px = x(c.t);
-            const gapTop = px - lastTop;
-            const gapBot = px - lastBottom;
-            const row = gapTop >= DOT + 4 ? 0 : gapBot >= DOT + 4 ? 1 : gapBot > gapTop ? 1 : 0;
-            if (row) lastBottom = px;
-            else lastTop = px;
-            return { c, px, row };
-          });
-          return (
-            <div key={col} className="tl-lane" style={{ "--col": m.color, "--soft": m.soft, height: LANE_H } as React.CSSProperties}>
-              <div className="tl-label">
-                <span className="col-icon">
-                  <ColumnIcon column={col} size={15} />
-                </span>
-                {m.label}
-                <span className="tl-count">{lane.length}</span>
-              </div>
-              <div className="tl-track" style={{ width: TRACK_W }}>
-                <span className="tl-line" />
-                {placed
-                  .filter(({ c }) => c.column === "questions" && c.resolved && c.updated_t != null && c.updated_t > c.t)
-                  .map(({ c }, k) => (
-                    <span
-                      key={`bar-${c.id}`}
-                      className="tl-answer"
-                      style={{ left: x(c.t), width: Math.max(4, x(c.updated_t!) - x(c.t)), top: LANE_H / 2 - 3 + ((k % 3) - 1) * 9 }}
-                    >
-                      <CircleCheckBig size={14} aria-hidden />
-                    </span>
-                  ))}
-                {placed.map(({ c, px, row }) => (
-                  <div
-                    key={c.id}
-                    className="tl-dot"
-                    style={{ left: px - DOT / 2, top: row ? LANE_H / 2 + 1 : LANE_H / 2 - DOT - 1 }}
-                    title={`${fmtTime(c.t)} · ${c.title}`}
-                  >
-                    <Illus card={c} className="tl-illus" eager />
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-        <div className="tl-axis" style={{ width: TRACK_W }}>
-          {ticks.map((t) => (
-            <span key={t} style={{ left: x(t) }}>
-              {fmtTime(t)}
-            </span>
-          ))}
-        </div>
-      </div>
-      <p className="tl-note">
-        <CircleCheckBig size={14} aria-hidden /> Green bar = a question that was answered later in the meeting
-      </p>
     </div>
   );
 }
@@ -434,6 +383,108 @@ function SlideHead({ title, column, page, sub, icon }: { title: string; column?:
       <span className="slide-brand">
         <Logo small />
       </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- flow map
+function FlowSlide({ report }: { report: Report }) {
+  const flow = report.flow!;
+  const gaps = openGaps(report).length;
+  const conflicts = flow.contradictions.filter((c) => !c.resolved).length;
+  const bugs = flow.bugs.filter((b) => !b.fixed).length;
+  const sub = [
+    `${flow.steps.length} steps`,
+    `${gaps} ${gaps === 1 ? "gap" : "gaps"}`,
+    conflicts ? `${conflicts} ${conflicts === 1 ? "conflict" : "conflicts"}` : "",
+    bugs ? `${bugs} open ${bugs === 1 ? "bug" : "bugs"}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return (
+    <div className="slide" style={{ "--col": "#4f46e5", "--soft": "#eef0fe" } as React.CSSProperties}>
+      <SlideHead title="Flow map" sub={sub} icon={<GitBranch size={24} aria-hidden />} />
+      <div className="fslide-map">
+        <FlowDiagram flow={flow} className="fslide-svg" box={{ w: 1120, h: 440 }} />
+      </div>
+      <div className="fslide-foot">
+        <span className="fm-legend">
+          <i className="lg-solid" /> discussed
+          <i className="lg-dash" /> gap: nobody said
+          <i className="lg-fail" /> fail path
+        </span>
+        <span className="fslide-check">
+          <ShieldCheck size={15} aria-hidden /> Every box is backed by a quote checked against the transcript
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- gaps & conflicts
+function SlideQuote({ ev, report, tone }: { ev: Evidence; report: Report; tone?: string }) {
+  const who = report.speakers[ev.speaker] || `Speaker ${ev.speaker}`;
+  return (
+    <blockquote className={`gq ${tone ?? ""}`}>
+      <p>“{ev.quote}”</p>
+      <footer>
+        {who} · {fmtTime(ev.t)}
+      </footer>
+    </blockquote>
+  );
+}
+
+function GapsSlide({ slide, report }: { slide: Extract<Slide, { kind: "gaps" }>; report: Report }) {
+  const step = (id: string | null) => report.flow?.steps.find((s) => s.id === id)?.label;
+  return (
+    <div className="slide" style={{ "--col": "#b45309", "--soft": "#fff7e8" } as React.CSSProperties}>
+      <SlideHead
+        title="What was missed"
+        sub="Branches nobody covered and statements that conflict"
+        icon={<CircleHelp size={24} aria-hidden />}
+        page={slide.pages > 1 ? `${slide.page} / ${slide.pages}` : undefined}
+      />
+      <div className="gslide">
+        <section>
+          <h3 className="gs-head gap">
+            <CircleHelp size={18} aria-hidden /> Nobody covered
+          </h3>
+          {slide.gaps.length === 0 && slide.bugs.length === 0 && <p className="gs-none">No open gaps.</p>}
+          {slide.gaps.map((g) => (
+            <div key={g.id} className="gs-item gap">
+              <b>{g.question}</b>
+              {step(g.step) && <span className="gs-step">at “{step(g.step)}”</span>}
+              {g.evidence[0] && <SlideQuote ev={g.evidence[0]} report={report} />}
+            </div>
+          ))}
+          {slide.bugs.map((b) => (
+            <div key={b.id} className="gs-item bug">
+              <b>
+                <Bug size={16} aria-hidden /> {b.text}
+              </b>
+              {step(b.step) && <span className="gs-step">on “{step(b.step)}”</span>}
+              {b.evidence[0] && <SlideQuote ev={b.evidence[0]} report={report} tone="bug" />}
+            </div>
+          ))}
+        </section>
+        <section>
+          <h3 className="gs-head conflict">
+            <TriangleAlert size={18} aria-hidden /> Conflicting statements
+          </h3>
+          {slide.conflicts.length === 0 && <p className="gs-none">No conflicting statements found.</p>}
+          {slide.conflicts.map((c) => (
+            <div key={c.id} className="gs-item conflict">
+              <b>{c.note}</b>
+              <div className="gs-vs">
+                <SlideQuote ev={c.a} report={report} tone="conflict" />
+                <span>vs</span>
+                <SlideQuote ev={c.b} report={report} tone="conflict" />
+              </div>
+            </div>
+          ))}
+          {slide.conflicts.length > 0 && <p className="gs-none">MinuteCanvas shows both quotes. It never decides who is right.</p>}
+        </section>
+      </div>
     </div>
   );
 }

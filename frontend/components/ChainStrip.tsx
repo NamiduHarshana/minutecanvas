@@ -59,26 +59,23 @@ export function ChainStrip({ state }: { state: MeetingState }) {
 
   return (
     <section className="chain" aria-label="Live AI chain">
-      <Stage icon={<AudioLines size={18} />} model="Muse Voice Transcribe" main={vMain} sub={vSub} tone={vTone} />
+      <Stage icon={<AudioLines size={14} />} model="Muse Voice" main={vMain} sub={vSub} tone={vTone} />
       <Flow active={!paused && (queued > 0 || sp.state === "thinking")} />
-      <Stage icon={<Sparkles size={18} />} model="Muse Spark" main={sMain} sub={sSub} tone={sTone} />
+      <Stage icon={<Sparkles size={14} />} model="Muse Spark" main={sMain} sub={sSub} tone={sTone} />
       <Flow active={drawing > 0} />
-      <Stage icon={<ImageIcon size={18} />} model="Muse Image" main={iMain} sub={iSub} tone={iTone} />
+      <Stage icon={<ImageIcon size={14} />} model="Muse Image" main={iMain} sub={iSub} tone={iTone} />
     </section>
   );
 }
 
 function Stage({ icon, model, main, sub, tone }: { icon: React.ReactNode; model: string; main: string; sub: string; tone: Tone }) {
   return (
-    <div className={`stage-box tone-${tone}`}>
+    <div className={`stage-box tone-${tone}`} title={`${model}: ${main} · ${sub}`}>
       <span className="stage-icon" aria-hidden>
         {icon}
       </span>
-      <div className="stage-text">
-        <span className="stage-model">{model}</span>
-        <b className="stage-main">{main}</b>
-        <span className="stage-sub">{sub}</span>
-      </div>
+      <span className="stage-model">{model}</span>
+      <b className="stage-main">{main}</b>
     </div>
   );
 }
