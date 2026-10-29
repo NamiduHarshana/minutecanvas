@@ -75,11 +75,13 @@ type StepData = {
   fresh: boolean;
   selected: boolean;
   focused: boolean;
+  jumps: { id: string; num: number; label: string }[];
+  onJump: (id: string) => void;
 };
 type GapData = { gap: FlowGap; fresh: boolean; selected: boolean; focused: boolean };
 
 const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
-  const { step, num, bugs, conflicts, note, fresh, selected, focused } = data;
+  const { step, num, bugs, conflicts, note, fresh, selected, focused, jumps, onJump } = data;
   const Icon = stepIcon(step);
   const state = bugs ? "is-bug" : conflicts ? "is-conflict" : "";
   return (
@@ -91,6 +93,25 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
       <span className="fm-top">
         <span className="fm-num">{num}</span>
         <span className="fm-kind">{KIND_LABEL[step.kind]}</span>
+        {jumps.length > 0 && (
+          // a link drawn as a connector instead of a long line across the map: click a number to go there
+          <span className="fm-jumps" title={"Continues to: " + jumps.map((j) => `${j.num} ${j.label}`).join(", ")}>
+            ↪
+            {jumps.slice(0, 3).map((j) => (
+              <button
+                key={j.id}
+                className="nodrag nopan"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onJump(j.id);
+                }}
+              >
+                {j.num}
+              </button>
+            ))}
+            {jumps.length > 3 && <em>+{jumps.length - 3}</em>}
+          </span>
+        )}
         {fresh && <b className="fm-fresh">{step.updated_t != null ? "Updated" : "New"}</b>}
       </span>
       <span className="fm-main">
@@ -175,6 +196,7 @@ function buildGraph(
   now: number,
   box: { w: number; h: number },
   pulse: { id: string; at: number } | null,
+  onJump: (id: string) => void,
 ) {
   // fold long flows into rows when fitting the whole line would make the text too small
   let L = layoutFlow(flow, { ...box, enough: READ_ZOOM });
@@ -200,6 +222,8 @@ function buildGraph(
             fresh: fresh(n.id),
             selected: sel?.kind === "step" && sel.id === n.id,
             focused: focused(n.id),
+            jumps: n.jumps ?? [],
+            onJump,
           } satisfies StepData,
           width: n.w,      // fixed sizes (same as the CSS): the minimap needs them
           height: n.h,
@@ -293,11 +317,12 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
     };
   }, [flash, pulse]);
 
+  const jumpRef = useRef<(id: string) => void>(() => {});
   const bodyRef = useRef<HTMLDivElement>(null);
   const fitsRef = useRef(true);
   const [boxW, setBoxW] = useState(1000);
   const { nodes, edges, openGaps, width, height, fits } = useMemo(
-    () => buildGraph(flow, flash, sel, now, { w: boxW - 40, h: BODY_MAX - 70 }, pulse),
+    () => buildGraph(flow, flash, sel, now, { w: boxW - 40, h: BODY_MAX - 70 }, pulse, (id) => jumpRef.current(id)),
     [flow, flash, sel, now, boxW, pulse],
   );
   useEffect(() => {
@@ -359,6 +384,11 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
     },
     [rf],
   );
+  // connector chip ("↪ 7") clicked: go to that step and pulse it
+  jumpRef.current = (id: string) => {
+    setSel({ kind: "step", id });
+    centerOn(id, true);
+  };
 
   // focus requests from callouts / question cards
   useEffect(() => {
@@ -404,8 +434,10 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
           {open ? <ChevronUp size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
         </button>
         {mapping && (
-          <span className="fm-busy">
-            <LoaderCircle size={13} className="spin" aria-hidden /> {checking ? "Muse Spark is checking for gaps…" : "Muse Spark is mapping…"}
+          <span className="fm-busy" title={checking ? "Muse Spark is checking for gaps…" : "Muse Spark is mapping…"}>
+            <LoaderCircle size={13} className="spin" aria-hidden />
+            <span className="fm-busy-text long">{checking ? "Muse Spark is checking for gaps…" : "Muse Spark is mapping…"}</span>
+            <span className="fm-busy-text short">{checking ? "Checking gaps…" : "Mapping…"}</span>
           </span>
         )}
         <div className="fm-head-right">

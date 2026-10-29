@@ -8,6 +8,9 @@ import { fmtTime } from "@/core/store";
 import { ColumnIcon, Illus, StatusBadge } from "./ui";
 import { Logo } from "./Logo";
 import { FlowDiagram } from "./FlowDiagram";
+import { layoutFlow } from "@/core/flowLayout";
+
+const FLOW_BOX = { w: 1120, h: 440 };
 
 const GRID_PER_PAGE = 6;
 const ROWS_PER_PAGE = 6;
@@ -393,6 +396,8 @@ function FlowSlide({ report }: { report: Report }) {
   const gaps = openGaps(report).length;
   const conflicts = flow.contradictions.filter((c) => !c.resolved).length;
   const bugs = flow.bugs.filter((b) => !b.fixed).length;
+  // same layout call as FlowDiagram (box 1120 x 440): show the "↪" legend only when the map uses connectors
+  const hasJumps = layoutFlow(flow, FLOW_BOX).nodes.some((n) => n.type === "step" && (n.jumps?.length ?? 0) > 0);
   const sub = [
     `${flow.steps.length} steps`,
     `${gaps} ${gaps === 1 ? "gap" : "gaps"}`,
@@ -405,13 +410,18 @@ function FlowSlide({ report }: { report: Report }) {
     <div className="slide" style={{ "--col": "#4f46e5", "--soft": "#eef0fe" } as React.CSSProperties}>
       <SlideHead title="Flow map" sub={sub} icon={<GitBranch size={24} aria-hidden />} />
       <div className="fslide-map">
-        <FlowDiagram flow={flow} className="fslide-svg" box={{ w: 1120, h: 440 }} />
+        <FlowDiagram flow={flow} className="fslide-svg" box={FLOW_BOX} />
       </div>
       <div className="fslide-foot">
         <span className="fm-legend">
           <i className="lg-solid" /> discussed
           <i className="lg-dash" /> gap: nobody said
           <i className="lg-fail" /> fail path
+          {hasJumps && (
+            <>
+              <b className="lg-jump">↪ 7</b> continues at step 7
+            </>
+          )}
         </span>
         <span className="fslide-check">
           <ShieldCheck size={15} aria-hidden /> Every box is backed by a quote checked against the transcript
@@ -449,7 +459,7 @@ function GapsSlide({ slide, report }: { slide: Extract<Slide, { kind: "gaps" }>;
           <h3 className="gs-head gap">
             <CircleHelp size={18} aria-hidden /> Nobody covered
           </h3>
-          {slide.gaps.length === 0 && slide.bugs.length === 0 && <p className="gs-none">No open gaps.</p>}
+          {slide.page === 1 && slide.gaps.length === 0 && slide.bugs.length === 0 && <p className="gs-none">No open gaps.</p>}
           {slide.gaps.map((g) => (
             <div key={g.id} className="gs-item gap">
               <b>{g.question}</b>
@@ -471,7 +481,8 @@ function GapsSlide({ slide, report }: { slide: Extract<Slide, { kind: "gaps" }>;
           <h3 className="gs-head conflict">
             <TriangleAlert size={18} aria-hidden /> Conflicting statements
           </h3>
-          {slide.conflicts.length === 0 && <p className="gs-none">No conflicting statements found.</p>}
+          {/* later pages: an empty column just means everything fit on page 1 */}
+          {slide.page === 1 && slide.conflicts.length === 0 && <p className="gs-none">No conflicting statements found.</p>}
           {slide.conflicts.map((c) => (
             <div key={c.id} className="gs-item conflict">
               <b>{c.note}</b>

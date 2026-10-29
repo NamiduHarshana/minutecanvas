@@ -69,6 +69,9 @@ class Settings:
     max_images: int = field(default_factory=lambda: _int("MAX_IMAGES", 80))
     max_flow_calls: int = field(default_factory=lambda: _int("MAX_FLOW_CALLS", 150))   # Flow agent rounds
     flow_enabled: bool = field(default_factory=lambda: _env("FLOW_ENABLED", "1") != "0")
+    # second-opinion check before a contradiction is shown (a separate Spark call that sees both lines in context)
+    verify_conflicts: bool = field(default_factory=lambda: _env("VERIFY_CONFLICTS", "1") != "0")
+    max_conflict_checks: int = field(default_factory=lambda: _int("MAX_CONFLICT_CHECKS", 12))
     gap_review_cooldown_s: float = field(default_factory=lambda: _float("GAP_REVIEW_COOLDOWN_S", 30.0))
     # automatic gap check during the meeting (live rounds only see ~45 s, so gaps need a wider look); 0 = off
     auto_gap_check_s: float = field(default_factory=lambda: _float("AUTO_GAP_CHECK_S", 240.0))

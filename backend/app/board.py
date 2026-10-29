@@ -5,6 +5,7 @@ import re
 import uuid
 from dataclasses import asdict, dataclass, field
 
+from .flow import _stems
 from .security import clean_optional, clean_text
 
 COLUMNS = ("goals", "decisions", "actions", "updates", "questions")
@@ -97,18 +98,36 @@ def _is_big(n: str) -> bool:
 
 _STOP = {"the", "and", "for", "with", "into", "from", "their", "they", "user", "users", "customer",
          "customers", "will", "can", "should", "must", "then", "via", "using", "through", "each", "after"}
+NEAR_STEP_S = 45.0      # a card said within this many seconds of a step's own line is about that moment
 
 
-def restates_step(title: str, steps: list[str]) -> bool:
-    """A card that only repeats a Flow Map step ("Submit the story map" vs step "Submit story map")."""
+def _stemset(s: str) -> set[str]:
+    return set(_stems(w for w in _norm(s) if w not in _STOP))
+
+
+def restates_step(title: str, steps: list, t: float | None = None, column: str = "decisions") -> bool:
+    """A card that only repeats a Flow Map step. steps: labels, or {"label", "times"} (times = when the step's
+    quotes were said). Two levels:
+    - any column: same words as the step plus at most one more ("Submit the story map" vs "Submit story map");
+    - goals / decisions said within NEAR_STEP_S of that step's line: most of the step's words
+      ("Access placement network via session registration" vs step "Tap Placement Network").
+    Cards with numbers (prices, counts, dates) are real facts and are always kept."""
     if numbers(title):
-        return False                     # prices, counts, dates are real facts, keep them
-    t = _norm(title) - _STOP
-    if len(t) < 2:
         return False
-    for label in steps:
-        st = _norm(label) - _STOP
-        if len(st) >= 2 and st <= t and len(t - st) <= 1:
+    words = _stemset(title)
+    if len(words) < 2:
+        return False
+    for item in steps:
+        label = item if isinstance(item, str) else item.get("label", "")
+        times = [] if isinstance(item, str) else item.get("times") or []
+        st = _stemset(label)
+        if len(st) < 2:
+            continue
+        if st <= words and len(words - st) <= 1:
+            return True
+        shared = len(st & words)
+        near = t is not None and any(abs(t - x) <= NEAR_STEP_S for x in times)
+        if column in ("goals", "decisions") and near and shared >= 2 and shared * 3 >= len(st) * 2:
             return True
     return False
 
@@ -161,7 +180,7 @@ class Board:
                 return c
         return None
 
-    def apply_spark(self, ops: dict, now_t: float, flow_steps: list[str] | None = None) -> BoardChange:
+    def apply_spark(self, ops: dict, now_t: float, flow_steps: list | None = None) -> BoardChange:
         ch = BoardChange()
         if not isinstance(ops, dict):
             return ch
@@ -197,7 +216,9 @@ class Board:
                 continue
             if any(_similar(t, title) for t in self.deleted_titles):
                 continue
-            if column in ("goals", "decisions", "actions") and flow_steps and restates_step(title, flow_steps):
+            said_t = _parse_t(n.get("said_at"), now_t)
+            if column in ("goals", "decisions", "actions") and flow_steps and \
+                    restates_step(title, flow_steps, said_t, column):
                 continue                 # already a box on the Flow Map
             dup = self._find_duplicate(column, title)
             if dup:  # same topic -> merge into the existing card instead of a 2nd card
@@ -213,7 +234,7 @@ class Board:
                 owner=clean_optional(n.get("owner"), OWNER_MAX),
                 due=clean_optional(n.get("due"), DUE_MAX),
                 status=status,
-                t=round(_parse_t(n.get("said_at"), now_t), 1),
+                t=round(said_t, 1),
                 image_prompt=clean_text(n.get("image_prompt"), PROMPT_MAX) or title,
             )
             self.cards[c.id] = c
@@ -317,6 +338,7 @@ class Board:
         for k in conflicts:
             if k.resolved:
                 continue
+            both = numbers(k.a.quote) | numbers(k.b.quote)
             for ev in (k.a, k.b):
                 nums = numbers(ev.quote)
                 big = {n for n in nums if _is_big(n)}      # "1400", "$250": specific enough to match from nearby lines
@@ -324,6 +346,11 @@ class Board:
                     if c.conflict_ref or c.column == "questions":
                         continue
                     dt = abs(c.t - ev.t)
+                    # a card whose title has numbers is about those numbers: "Price 7-session package at $1400" is not
+                    # tied to a $200-vs-$250 conflict just because its detail mentions "$1000 was said earlier"
+                    tn = numbers(c.title)
+                    if tn and not (tn & both):
+                        continue
                     shared = nums & numbers(f"{c.title} {c.detail}")
                     if (dt <= 2.5 and shared) or (dt <= 30 and shared & big):
                         c.conflict_ref = k.id

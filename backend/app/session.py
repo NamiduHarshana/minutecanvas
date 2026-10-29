@@ -16,11 +16,11 @@ from fastapi import WebSocket
 from .audio import AudioBuffer
 from .board import Board, Card
 from .config import BYTES_PER_SEC, settings
-from .flow import Flow, Result
+from .flow import Flow, Result, check_quote
 from .meta_api import MetaClient, ToolsUnsupported, image_mime
 from .meta_voice import VoiceStream
 from .prompts import (FLOW_JSON_NOTE, FLOW_JSON_SCHEMA, FLOW_SYSTEM, FLOW_TOOLS, SPARK_SCHEMA, SPARK_SYSTEM,
-                      SUMMARY_SCHEMA, SUMMARY_SYSTEM)
+                      SUMMARY_SCHEMA, SUMMARY_SYSTEM, VERIFY_CONFLICT_SCHEMA, VERIFY_CONFLICT_SYSTEM)
 from .security import RateLimiter, clean_text
 
 log = logging.getLogger("minutecanvas.session")
@@ -33,6 +33,8 @@ MAX_SPARK_LINES = 120       # cap per call (long meetings: only new transcript +
 FLOW_MAX_TURNS = 3          # agent turns per round (2nd/3rd only to fix rejected calls)
 FLOW_MAX_CALLS_PER_TURN = 20
 REVIEW_CONTEXT_LINES = 80   # gap review / final pass: recent lines shown for context
+HINT_LOOKBACK = 300         # older lines compared with the new ones for number changes
+FLOW_WAIT_S = 30.0         # cards wait at most this long for the Flow round of the same tick
 _HAS_NUMBER = re.compile(r"\d|\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|"
                          r"forty|fifty|hundred|thousand)\b", re.I)
 
@@ -72,6 +74,7 @@ class Session:
         self.flow_done_idx = 0
         self.flow_calls = 0
         self.flow_stats = {"accepted": 0, "rejected": 0, "rounds": 0}
+        self.conflict_checks = 0
         self.last_gap_review = -1e9
         self.last_auto_check = time.monotonic()
         self.auto_check_shape = (0, 0)   # (steps, links) at the last automatic gap check
@@ -287,11 +290,22 @@ class Session:
         return True
 
     async def spark_once(self, final: bool = False):
-        """One round: the cards call and the Flow agent run in parallel (no extra delay)."""
+        """One round: the cards call and the Flow agent run in parallel (no extra delay). The cards are applied
+        only after the Flow round, so a card that repeats a step added in this same round is still caught."""
         async with self.spark_lock:
-            await asyncio.gather(self._cards_round(final), self._flow_round("final" if final else "live"))
+            flow_done = asyncio.Event()
 
-    async def _cards_round(self, final: bool):
+            async def flow():
+                try:
+                    await self._flow_round("final" if final else "live")
+                finally:
+                    flow_done.set()
+            await asyncio.gather(self._cards_round(final, flow_done), flow())
+
+    def _steps_for_cards(self) -> list[dict]:
+        return [{"label": st.label, "times": [e.t for e in st.evidence]} for st in self.flow.steps.values()][:60]
+
+    async def _cards_round(self, final: bool, flow_done: asyncio.Event | None = None):
         if True:
             end = len(self.transcript)
             new = self.transcript[self.spark_done_idx:end]
@@ -326,7 +340,12 @@ class Session:
                 return
             self.spark_done_idx = end
             self._debug("cards", final=final, seconds=round(time.monotonic() - t0, 1), payload=payload, response=ops)
-            ch = self.board.apply_spark(ops, self.meeting_t, steps)
+            if flow_done is not None and not flow_done.is_set():
+                try:                       # usually a few seconds; never hold the cards for long
+                    await asyncio.wait_for(flow_done.wait(), timeout=FLOW_WAIT_S)
+                except asyncio.TimeoutError:
+                    pass
+            ch = self.board.apply_spark(ops, self.meeting_t, self._steps_for_cards())
             for c in self.board.link_conflicts(list(self.flow.contradictions.values())):
                 if c not in ch.added and c not in ch.updated:
                     ch.updated.append(c)
@@ -420,6 +439,19 @@ class Session:
             "earlier_lines_for_context_only": [self._line(x) for x in context],
             "new_transcript": [self._line(x) for x in new],
         }
+        hint_new = new or context                 # review rounds: look at the recent lines
+        if hint_new:
+            h0 = hint_new[0].get("id", 0)
+            hints = self.flow.hints(hint_new, [x for x in self.transcript[max(0, h0 - HINT_LOOKBACK):h0]])
+            code_hints = {}
+            if hints["number_changes"]:
+                code_hints["number_changes"] = [{"older": self._line(a), "newer": self._line(b), "counts": unit}
+                                                for a, b, unit in hints["number_changes"]]
+            if hints["gap_answers"]:
+                code_hints["gap_answers"] = [{"gap": g.id, "question": g.question, "line": self._line(x)}
+                                             for g, x in hints["gap_answers"]]
+            if code_hints:
+                payload["code_hints"] = code_hints
         lines = self.transcript[:lines_all]      # quotes may come from any line said so far
         self.flow.gap_budget = 1 if mode in ("live", "gap_check") else 2
         self.flow_calls += 1
@@ -466,12 +498,18 @@ class Session:
                          "accepted": acc.accepted, "rejected": acc.rejected,
                          "gaps": sum(1 for e in acc.events if e["kind"] == "gap")})
 
-    def _apply_flow_call(self, name, args, lines: list[dict], acc: "_FlowRound") -> dict:
+    async def _apply_flow_call(self, name, args, lines: list[dict], acc: "_FlowRound") -> dict:
         if isinstance(args, str):
             try:
                 args = json.loads(args or "{}")
             except ValueError:
                 args = None
+        if name == "flag_contradiction" and isinstance(args, dict):
+            why = await self._second_opinion(args, lines)
+            if why:
+                acc.rejected += 1
+                log.info("contradiction rejected by the second-opinion check: %s", why)
+                return {"ok": False, "error": why}
         res: Result = self.flow.apply(name, args, lines, self.meeting_t)
         if res.ok:
             acc.accepted += 1
@@ -492,6 +530,35 @@ class Session:
             if c and c not in acc.cards_added:
                 acc.cards_updated.append(c)
         return res.message
+
+    async def _second_opinion(self, args: dict, lines: list[dict]) -> str | None:
+        """Before a contradiction is shown, a separate Spark call looks at both lines WITH the lines said just before
+        them and says whether they are about the same fact ("$250 per session" for coaching vs "$200 one-on-one" for
+        system design are not). Returns an error for the agent, or None to go on. Fails open: no check, no block."""
+        if not settings.verify_conflicts or self.conflict_checks >= settings.max_conflict_checks:
+            return None
+        ea, _ = check_quote(args.get("quote_a"), lines)
+        eb, _ = check_quote(args.get("quote_b"), lines)
+        if not ea or not eb or ea.line == eb.line:
+            return None                      # Flow.apply gives the agent the exact error
+        def ctx(ev):
+            i = next((k for k, x in enumerate(lines) if x.get("id") == ev.line), None)
+            return [] if i is None else [self._line(x) for x in lines[max(0, i - 3):i + 1]]
+        a, b = (ea, eb) if ea.line < eb.line else (eb, ea)
+        payload = {"finding": clean_text(args.get("note"), 160), "statement_a_with_lines_before": ctx(a),
+                   "statement_b_with_lines_before": ctx(b)}
+        self.conflict_checks += 1
+        try:
+            out = await self.meta.spark_json(VERIFY_CONFLICT_SYSTEM, json.dumps(payload, ensure_ascii=False),
+                                             "verify_conflict", VERIFY_CONFLICT_SCHEMA)
+        except Exception as e:  # noqa: BLE001
+            log.warning("conflict check failed, keeping the finding: %s", e)
+            return None
+        self._debug("conflict_check", payload=payload, response=out)
+        if isinstance(out, dict) and out.get("same_fact") is False:
+            return (f"second-opinion check: not the same fact (A is about {clean_text(out.get('a_is_about'), 60)}, "
+                    f"B is about {clean_text(out.get('b_is_about'), 60)}). Don't flag it")
+        return None
 
     async def _flow_tools(self, payload: dict, lines: list[dict], acc: "_FlowRound"):
         messages = [{"role": "system", "content": FLOW_SYSTEM},
@@ -517,7 +584,7 @@ class Session:
             for k, c in enumerate(calls):
                 fn = c.get("function") or {}
                 if k < FLOW_MAX_CALLS_PER_TURN:
-                    out = self._apply_flow_call(fn.get("name"), fn.get("arguments"), lines, acc)
+                    out = await self._apply_flow_call(fn.get("name"), fn.get("arguments"), lines, acc)
                 else:
                     out = {"ok": False, "error": "too many calls in one turn; skipped"}
                 turn_log.append({"name": fn.get("name"), "arguments": fn.get("arguments"), "result": out})
@@ -543,7 +610,7 @@ class Session:
             calls = [c for c in (out.get("calls") or []) if isinstance(c, dict)][:FLOW_MAX_CALLS_PER_TURN]
             if not calls:
                 break
-            results = [self._apply_flow_call(c.get("name"), c.get("arguments"), lines, acc) for c in calls]
+            results = [await self._apply_flow_call(c.get("name"), c.get("arguments"), lines, acc) for c in calls]
             acc.log.append({"calls": [{"name": c.get("name"), "arguments": c.get("arguments"), "result": r}
                                       for c, r in zip(calls, results)]})
             if all(r.get("ok") for r in results):

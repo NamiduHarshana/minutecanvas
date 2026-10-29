@@ -92,6 +92,172 @@ def _similar(a: str, b: str) -> bool:
     return len(x & y) / len(x | y) >= 0.75
 
 
+# ---------- "what happens after X?" gaps the transcript already answers ----------
+# "we provide feedback and then like schedule a session": the line itself says what comes next.
+_NEXT_MARK = re.compile(r"\b(?:and then|then|after that|afterwards|after which|followed by|once thats done)\b")
+NEXT_WINDOW = 10      # words before a "then" that must name the step ("…provide feedback and then …")
+_AFTER_GAP = re.compile(r"\b(?:after|next|then|afterwards|once)\b")
+_FAIL_GAP = re.compile(r"\b(?:fail\w*|wrong|reject\w*|declin\w*|cancel\w*|timeout|time out|expire\w*|miss\w*|refund\w*|"
+                       r"not|no|never|doesnt|dont|cant|pay\w*|price|fee|cost|error|invalid|late|lost)\b")
+_FILLER = {"like", "just", "basically", "actually", "really", "kind", "sort", "maybe", "also", "they", "them", "their",
+           "theyre", "well", "you", "your", "will", "would", "can", "could", "going", "gonna", "that", "this",
+           "there", "then", "the", "and", "for", "with", "into", "from", "some", "okay", "yeah", "right", "see", "figure",
+           "decide", "discuss", "talk", "later", "out", "something", "stuff", "thing", "things", "know", "think", "get",
+           "gets", "got", "have", "has", "had", "are", "was", "were", "does", "its", "user", "users", "customer",
+           "customers", "she", "him", "her", "his", "our", "able", "need", "needs", "want", "wants", "should", "must",
+           "what", "when", "where", "how", "who", "now", "here", "all", "any", "one", "next", "first", "last",
+           "say", "said", "says", "let", "lets", "make", "sure"}
+
+
+def _same_ask(a: str, b: str) -> bool:
+    """Two gap questions that ask the same thing in other words ("…after the mock interviews?" / "…after the mock
+    interview?"): same content words once plurals and verb endings are cut."""
+    x, y = set(_stems(_content(tokens(a)))), set(_stems(_content(tokens(b))))
+    if len(x) < 2 or len(y) < 2:
+        return False
+    return len(x & y) / len(x | y) >= 0.7
+
+
+def _content(words: list[str]) -> set[str]:
+    return {w for w in words if len(w) > 2 and w not in _FILLER}
+
+
+def is_after_gap(branch: str, question: str) -> bool:
+    """A "what comes next" gap (not a failure / money / drop-off branch)."""
+    text = " ".join(tokens(f"{branch} {question}"))
+    return bool(_AFTER_GAP.search(text)) and not _FAIL_GAP.search(text)
+
+
+_PAY_GAP = re.compile(r"\b(?:how (?:do|does|will|can|should|would) .{0,40}\bpay\b|payment method|how .{0,30}\b(?:charged|billed)|"
+                      r"pay for|how pay)\b")
+
+
+def is_pay_gap(branch: str, question: str) -> bool:
+    """"How do customers pay the $100?" (not "What if the payment fails?", which is a different branch)."""
+    text = " ".join(tokens(f"{branch} {question}"))
+    return bool(_PAY_GAP.search(text)) and not re.search(r"\b(?:fail\w*|declin\w*|refund\w*|cancel\w*)\b", text)
+
+
+def said_next(text: str, label: str, own_quotes: list[str] | None = None) -> str | None:
+    """The words after "then …" in a line, when the step is named before the "then" and the words after it
+    name something else ("provide feedback and then schedule a session" for step "Receive feedback").
+    own_quotes: the step's own evidence; the words before any "then" in them also describe the step itself
+    (so "…then we'll get back to them with the exact time" is not "what comes after" step "Confirm exact time")."""
+    flat = " ".join(tokens(text))
+    name = set(_stems(_content(tokens(label))))
+    if not name:
+        return None
+    own = set(name)
+    for q in own_quotes or []:
+        qf = " ".join(tokens(q))
+        m = _NEXT_MARK.search(qf)
+        own |= set(_stems(_content((qf[:m.start()] if m else qf).split())))
+    marks = list(_NEXT_MARK.finditer(flat))
+    for k in range(len(marks) - 1, -1, -1):
+        m = marks[k]
+        before = set(_stems(flat[:m.start()].split()[-NEXT_WINDOW:]))   # the step is named just before "then"
+        end = marks[k + 1].start() if k + 1 < len(marks) else len(flat)   # up to the next "then"
+        rest = flat[m.end():end].split()[:8]
+        if before & name and len(rest) >= 2 and set(_stems(_content(rest))) - own:
+            return " ".join(rest)
+    return None
+
+
+# ---------- numbers and what they count (contradiction checks and hints) ----------
+_NUM_WORDS = {w: i for i, w in enumerate(
+    "zero _ two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+    "seventeen eighteen nineteen twenty".split()) if w != "_"}           # "one" left out: "one-on-one", "no one"
+_NUM_WORDS.update({"thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "hundred": 100, "thousand": 1000})
+_UNIT_SKIP = {"of", "those", "these", "the", "a", "an", "per", "each", "more", "like", "um", "uh", "and", "or", "to",
+              "for", "at", "in", "on", "about", "around", "maybe", "so", "extra", "other", "different", "again",
+              "instead", "total", "only", "plus", "then", "also", "including", "included"}
+_MONEY = {"dollar", "dollars", "bucks", "usd", "rupees", "rs", "lkr", "euro", "euros", "pounds"}
+TIME_UNITS = {"minut", "hour", "day", "week", "month", "year", "second"}
+
+
+def number_facts(text: str) -> list[tuple[float, set[str]]]:
+    """[(value, units)] for each number in a line: "$200 per session" -> (200, {money, session}),
+    "four of those stories" -> (4, {stori}), "make it 1400" -> (1400, {money}) (big bare numbers are prices)."""
+    toks = re.findall(r"\$?\d[\d,]*(?:\.\d+)?k?|[a-z]+", (text or "").lower().translate(_QUOTES))
+    out: list[tuple[float, set[str]]] = []
+    for i, t in enumerate(toks):
+        val = None
+        if t[0] in "$0123456789":
+            try:
+                raw = t.lstrip("$").replace(",", "")
+                val = float(raw[:-1]) * 1000 if raw.endswith("k") else float(raw)
+            except ValueError:
+                continue
+        elif t in _NUM_WORDS:
+            val = float(_NUM_WORDS[t])
+        if val is None:
+            continue
+        units: set[str] = set()
+        if t.startswith("$"):
+            units.add("money")
+        skipped, nouns, per = 0, 0, False
+        for w in toks[i + 1:i + 6]:
+            if w[0] in "$0123456789" or w in _NUM_WORDS:
+                break
+            if w in _MONEY:
+                units.add("money")
+                continue
+            if w == "per" and not nouns:
+                per = True               # "$200 per session": a rate, not a count of sessions
+                continue
+            if w in _UNIT_SKIP or len(w) < 3 or w in _FILLER:
+                if nouns:                # "five sessions you are…": the counted thing ends at the first filler
+                    break
+                skipped += 1
+                if skipped >= 3:
+                    break
+                continue
+            units.update(("per:" + x) if per else x for x in _stems([w]))   # "five review sessions": up to two words
+            nouns += 1
+            if nouns >= 2 or per:
+                break
+        if per or (val >= 100 and not (units - {"money"})):
+            units.add("money")
+        out.append((val, units))
+    return out
+
+
+def units_of(text: str) -> set[str]:
+    return set().union(*[u for _, u in number_facts(text)]) if number_facts(text) else set()
+
+
+def number_changes(older: dict, newer: dict) -> str | None:
+    """A unit counted with different numbers in two lines, e.g. "five sessions … $1,000" then "seven sessions … 1400".
+    Only units that come with prices in both lines, or time units, so two unrelated counts are not suggested."""
+    fa, fb = number_facts(older.get("text", "")), number_facts(newer.get("text", ""))
+    if not fa or not fb:
+        return None
+    money_a = any("money" in u for _, u in fa)
+    money_b = any("money" in u for _, u in fb)
+    for unit in sorted(set().union(*[u for _, u in fa]) & set().union(*[u for _, u in fb]) - {"money"}):
+        va = {v for v, u in fa if unit in u}
+        vb = {v for v, u in fb if unit in u}
+        if va and vb and not (va & vb) and (unit in TIME_UNITS or (money_a and money_b)):
+            return unit
+    return None
+
+
+def _stems(words) -> list[str]:
+    """Very small stemmer: map / mapping / maps, submit / submitted, schedule / scheduling."""
+    out = []
+    for w in words:
+        for suf in ("ions", "ion", "ings", "ing", "ed", "es", "s"):
+            if len(w) - len(suf) >= 3 and w.endswith(suf):
+                w = w[: -len(suf)]
+                break
+        if len(w) >= 5 and w.endswith("e"):        # schedule -> schedul (= scheduling)
+            w = w[:-1]
+        if len(w) >= 4 and w[-1] == w[-2]:         # submitt -> submit, mapp -> map
+            w = w[:-1]
+        out.append(w)
+    return out
+
+
 @dataclass
 class Step:
     id: str
@@ -170,6 +336,7 @@ class Flow:
         self.contradictions: dict[str, Contradiction] = {}
         self._n = {"s": 0, "l": 0, "b": 0, "g": 0, "c": 0}
         self.gap_budget = 1          # new gaps allowed this round (session sets it per mode)
+        self.hinted: set[frozenset] = set()   # number-change line pairs already suggested to the agent
 
     def _id(self, p: str) -> str:
         self._n[p] += 1
@@ -234,6 +401,63 @@ class Flow:
                 return s
         return None
 
+    def hints(self, new: list[dict], older: list[dict], max_changes: int = 3) -> dict:
+        """Things code noticed in the new lines, for the agent to check (it decides, code never flags by itself):
+        - number_changes: an older line and a new line that count the same thing with different numbers
+          (the model missed "five sessions for $1,000" -> "seven sessions, make it 1400" in one live run);
+        - gap_answers: a new line that says what comes after the step of an open "what happens after" gap."""
+        flagged = {frozenset((c.a.line, c.b.line)) for c in self.contradictions.values()} | self.hinted
+        changes: list[tuple[dict, dict, str]] = []
+        for b in reversed(new):
+            for a in reversed(older + [x for x in new if x.get("id", 0) < b.get("id", 0)]):
+                if frozenset((a.get("id"), b.get("id"))) in flagged:
+                    continue
+                unit = number_changes(a, b)
+                if unit:
+                    changes.append((a, b, unit))
+                    self.hinted.add(frozenset((a.get("id"), b.get("id"))))   # each pair is suggested once
+                    break                       # one older line per new line is enough
+            if len(changes) >= max_changes:
+                break
+        answers: list[tuple[Gap, dict]] = []
+        for g in self.open_gaps():
+            s = self.steps.get(g.step)
+            if not s or not is_after_gap(g.branch, g.question):
+                continue
+            last_ev = max((e.line for e in s.evidence + g.evidence), default=-1)
+            for x in new:
+                if x.get("id", -1) > last_ev and said_next(x.get("text", ""), s.label, [e.quote for e in s.evidence]):
+                    answers.append((g, x))
+                    break
+        return {"number_changes": changes, "gap_answers": answers}
+
+    def _said_next(self, s: Step, ev: Evidence, lines: list[dict]) -> str | None:
+        """Does the gap's own line, or a line the step came from, already say what happens next?"""
+        by_id = {int(x.get("id", -1)): x for x in lines}
+        seen: set[int] = set()
+        for e in [ev, *s.evidence]:
+            if e.line in seen:
+                continue
+            seen.add(e.line)
+            text = by_id.get(e.line, {}).get("text") or e.quote
+            nxt = said_next(text, s.label, [x.quote for x in s.evidence])
+            if nxt:
+                return nxt
+        return None
+
+    def _step_like(self, words: str, not_this: Step) -> Step | None:
+        """An existing step the "then …" words point to (shares most of its words)."""
+        w = set(_stems(_content(tokens(words))))
+        best, best_n = None, 0
+        for st in self.steps.values():
+            if st.id == not_this.id:
+                continue
+            lab = set(_stems(_content(tokens(st.label))))
+            n = len(lab & w)
+            if lab and n * 2 >= len(lab) and n > best_n:
+                best, best_n = st, n
+        return best
+
     # ---------- agent tools ----------
     def apply(self, name: str, args: dict, lines: list[dict], now_t: float) -> Result:
         fn = getattr(self, f"_t_{name}", None) if isinstance(name, str) and name.isidentifier() else None
@@ -262,6 +486,14 @@ class Flow:
         if kind == "start" and start is not None and start.label.lower() != label.lower():
             kind, demoted = "step", True     # one journey = one start; keeps the map one connected flow
         s = self.find_step(label)
+        if not s and self.steps and not demoted and kind != "start" and not src:
+            # a plain step with no arrow into it breaks the flow: say where it fits, or wait.
+            # (A second "start" = a separate process people began describing: kept, and listed as unlinked.)
+            if after:
+                return _err(f"step {after!r} not found: 'after' must be an existing step id, or the label of a step "
+                            "added earlier in this batch")
+            return _err("say where this step fits: add after = the step that comes before it. If the transcript "
+                        "doesn't say yet, don't add it now")
         if s:
             _add_ev(s.evidence, ev)
             note = "step already existed, reused it"
@@ -373,8 +605,15 @@ class Flow:
         ev, why = check_quote(a.get("quote"), lines)
         if not ev:
             return _err(why)
+        if is_after_gap(branch, question):
+            nxt = self._said_next(s, ev, lines)
+            if nxt:
+                hint = self._step_like(nxt, s)
+                todo = f"link_steps from {s.id} to {hint.id} ({hint.label})" if hint else f"add_step with after = {s.id}"
+                return _err(f"not a gap: the transcript already says what comes after {s.label!r} "
+                            f"(\"…then {nxt}\"). Map it instead: {todo}")
         for g in self.gaps.values():
-            if g.dismissed or not (_similar(g.branch, branch) or _similar(g.question, question)):
+            if g.dismissed or not (_similar(g.branch, branch) or _similar(g.question, question) or _same_ask(g.question, question)):
                 continue
             if g.step == s.id or g.resolved:
                 return _err(f"already flagged as {g.id}")
@@ -383,6 +622,11 @@ class Flow:
             _add_ev(g.evidence, ev)
             return Result(True, {"ok": True, "id": g.id, "note": "moved to this step"},
                           [{"kind": "gap_moved", "id": g.id, "step": s.id, "text": g.question, "from": old}])
+        if is_pay_gap(branch, question):
+            other = next((g for g in self.open_gaps() if is_pay_gap(g.branch, g.question)), None)
+            if other:
+                return _err(f"there is already an open payment gap ({other.id}: {other.question!r}): ask how people pay "
+                            "once for the whole flow, not again for each product or price")
         if self.gap_budget <= 0:
             return _err("gap limit for this round reached: keep only the most important gap")
         if len(self.open_gaps()) >= MAX_OPEN_GAPS or len(self.gaps) >= MAX_GAPS:
@@ -405,6 +649,12 @@ class Flow:
             return _err(f"quote_b: {why}")
         if ea.line == eb.line:
             return _err("quote_a and quote_b must come from two different transcript lines")
+        # what the numbers are about ("$200 per session" and "five sessions" are both about sessions)
+        ua = {u.removeprefix("per:") for u in units_of(ea.quote)} - {"money"}
+        ub = {u.removeprefix("per:") for u in units_of(eb.quote)} - {"money"}
+        if ua and ub and not (ua & ub):
+            return _err("the numbers count different things (" + ", ".join(sorted(ua)) + " vs " + ", ".join(sorted(ub))
+                        + "): a contradiction is two values for the SAME fact")
         pair = {ea.line, eb.line}
         for c in self.contradictions.values():
             if {c.a.line, c.b.line} == pair:

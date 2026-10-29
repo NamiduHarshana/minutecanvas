@@ -5,9 +5,11 @@ change it ONLY here (build_spark_request / build_image_request / extract_image).
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
+import os
 import random
 import re
 
@@ -161,8 +163,11 @@ class MetaClient:
     async def spark_json(self, system: str, user: str, schema_name: str, schema: dict,
                          history: list[dict] | None = None) -> dict:
         if settings.mock_meta:
+            await _mock_wait()
             if schema_name == "flow_calls":
                 return _mock_flow_json(user, history)
+            if schema_name == "verify_conflict":
+                return {"same_fact": True, "a_is_about": "mock", "b_is_about": "mock"}
             return _mock_spark(user, schema_name)
         last = None
         for attempt in range(3):
@@ -188,6 +193,7 @@ class MetaClient:
     async def spark_tools(self, messages: list[dict], tools: list[dict]) -> dict:
         """One agent turn. Returns the assistant message ({"content":..., "tool_calls":[...]})."""
         if settings.mock_meta:
+            await _mock_wait()
             return _mock_flow(messages)
         last = None
         for attempt in range(3):
@@ -272,6 +278,13 @@ def _mock_image() -> bytes:
     return base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
     )
+
+
+async def _mock_wait() -> None:
+    """MOCK_DELAY_S=4: mock calls take as long as real ones, so the "thinking" UI states can be checked."""
+    delay = float(os.environ.get("MOCK_DELAY_S") or 0)
+    if delay > 0:
+        await asyncio.sleep(delay)
 
 
 def _mock_flow(messages: list[dict]) -> dict:

@@ -1,7 +1,7 @@
 "use client";
 // Static SVG Flow Map for the report slide and the board export (same layout as the live map).
 import type { FlowData, StepKind } from "@/core/types";
-import { edgePath, layoutFlow, wrapText } from "@/core/flowLayout";
+import { edgePath, jumpText, layoutFlow, wrapText } from "@/core/flowLayout";
 import { conflictTag, issueTag, stepIcon, stepNote } from "@/core/flowLook";
 
 const KIND: Record<StepKind, { label: string; color: string; soft: string }> = {
@@ -107,6 +107,12 @@ export function FlowDiagram({ flow, className, box }: { flow: FlowData; classNam
             <text x={38} y={21.5} fontSize={9.5} fontWeight={800} letterSpacing="0.06em" fill={k.color}>
               {k.label}
             </text>
+            {n.jumps && n.jumps.length > 0 && (
+              // a link shown as a connector instead of a long line across the map
+              <text x={n.w - 12} y={21.5} textAnchor="end" fontSize={10.5} fontWeight={800} fill="#4f46e5">
+                {jumpText(n)}
+              </text>
+            )}
             <rect x={13} y={titleY - 17 + (lines.length > 1 ? 8 : 0)} width={24} height={24} rx={7} fill={bug ? "#fde4e4" : k.soft} />
             <Icon
               x={17}
