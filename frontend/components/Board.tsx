@@ -138,7 +138,7 @@ function SmallCard({
       onClick={() => actions.open(c.id)}
       tabIndex={0}
       onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && actions.open(c.id)}
-      title={`Said at ${fmtTime(c.t)}`}
+      title={`${c.flow_ref ? "Found" : "Said"} at ${fmtTime(c.t)}`}
     >
       <Illus card={c} className="sc-illus" />
       {(flash || isNew) && (

@@ -16,7 +16,8 @@ export interface Card {
   done: boolean;
   resolved: boolean;
   answer: string | null;
-  t: number;
+  answer_t?: number | null;        // questions: meeting time of the answer
+  t: number;                       // when it was said (cards from a Flow Map gap: when the gap was found)
   updated_t: number | null;
   image_url: string | null;
   image_status: ImageStatus;
@@ -37,7 +38,10 @@ export interface Evidence {
   quote: string;
 }
 
-export interface FlowStep { id: string; label: string; kind: StepKind; t: number; evidence: Evidence[]; updated_t: number | null }
+export interface FlowStep {
+  id: string; label: string; kind: StepKind; t: number; evidence: Evidence[]; updated_t: number | null;
+  part?: string | null;   // the part of the product / section it belongs to ("Behavioral coaching"): one band per part
+}
 export interface FlowLink { id: string; src: string; dst: string; label: string; type: "normal" | "fail"; t: number; evidence: Evidence[] }
 export interface FlowBug { id: string; step: string; text: string; t: number; evidence: Evidence[]; fixed: boolean; fix: Evidence | null }
 export interface FlowGap {
@@ -57,7 +61,7 @@ export interface FlowData {
 }
 export type FlowEventKind =
   | "step_added" | "step_updated" | "link_added" | "link_updated" | "bug" | "bug_fixed"
-  | "gap" | "gap_moved" | "gap_resolved" | "contradiction" | "contradiction_resolved";
+  | "gap" | "gap_moved" | "gap_resolved" | "gap_removed" | "contradiction" | "contradiction_resolved";
 export interface FlowEvent { kind: FlowEventKind; id: string; step?: string | null; text: string }
 export interface FlowStats { accepted: number; rejected: number; rounds: number }
 export type FlowMode = "live" | "gap_review" | "gap_check" | "final";

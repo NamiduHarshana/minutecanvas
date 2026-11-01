@@ -10,7 +10,7 @@ export const LINK_LABEL_CHARS = 22;
 
 export interface LaidStep {
   type: "step"; id: string; x: number; y: number; w: number; h: number; step: FlowStep; bugs: number; conflicts: number;
-  num: number;   // reading order (row by row, left to right) — what the presenter says out loud: "step 4"
+  num: number;   // fixed number (order the step was added): what the presenter says out loud, "step 4" — never changes
   /** big folded maps: links drawn as a connector chip ("↪ 7") instead of a long line across rows */
   jumps?: { id: string; num: number; label: string }[];
 }
@@ -25,8 +25,14 @@ export interface LaidEdge {
   points: { x: number; y: number }[];
   labelPos: { x: number; y: number } | null;
   wrapped?: boolean;   // goes on into the next row (folded layout)
+  ortho?: boolean;     // re-routed with right angles through the gap between two columns (see unblock)
 }
-export interface FlowLayout { nodes: LaidNode[]; edges: LaidEdge[]; width: number; height: number; openGaps: FlowGap[]; rows: number; wrapped: number }
+/** One product part / section of the meeting, drawn as its own row band ("Behavioral coaching"). */
+export interface LaidLane { key: string; label: string; x: number; y: number; w: number; h: number }
+export interface FlowLayout {
+  nodes: LaidNode[]; edges: LaidEdge[]; width: number; height: number; openGaps: FlowGap[]; rows: number; wrapped: number;
+  lanes?: LaidLane[];
+}
 
 export function shortLabel(s: string, n = LINK_LABEL_CHARS): string {
   return s.length > n ? s.slice(0, n - 1).trimEnd() + "…" : s;
@@ -90,75 +96,76 @@ function layoutOnce(flow: FlowData): FlowLayout {
     edges.push({ id: `gapedge:${x.id}`, src: x.step, dst: `gap:${x.id}`, kind: "gap", label: "", points: e?.points ?? [], labelPos: null });
   });
   const gl = g.graph() as { width?: number; height?: number };
-  return { nodes: numbered(nodes, () => 0, flowGroups(flow), flow), edges, width: gl.width ?? 0, height: gl.height ?? 0, openGaps, rows: 1, wrapped: 0 };
+  return renumber({ nodes, edges: unblock(edges, nodes), width: gl.width ?? 0, height: gl.height ?? 0, openGaps, rows: 1, wrapped: 0 }, stepNumbers(flow));
 }
 
 /**
- * Separate flows in one meeting (e.g. "coaching" and "system design") are numbered one after the other,
- * in the order they were first discussed, so a second flow never jumps in between the first flow's numbers.
+ * dagre does not steer the ends of a line around the other boxes stacked in the source's or target's column
+ * (v6.6 bench, 33-min map: "System design sessions -> Book one-on-one session" left its box upwards, straight through
+ * "Schedule story review" right above it). Such a line is re-drawn with right angles: out of the source's right side,
+ * along dagre's own middle points (they already run through free space), into the target's left side, with the turns
+ * in the empty gaps between columns. The new route is kept only if it is clear.
  */
-function flowGroups(flow: FlowData): Map<string, number> {
-  const parent = new Map(flow.steps.map((s) => [s.id, s.id]));
-  const find = (x: string): string => {
-    let r = x;
-    while (parent.get(r) !== r) r = parent.get(r)!;
-    parent.set(x, r);
-    return r;
-  };
-  flow.links.forEach((l) => {
-    if (parent.has(l.src) && parent.has(l.dst)) parent.set(find(l.src), find(l.dst));
+function unblock(edges: LaidEdge[], nodes: LaidNode[]): LaidEdge[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const lane = new Map<number, number>();    // gap right of a column -> lines already turning in it
+  return edges.map((e) => {
+    if (e.kind === "gap" || e.points.length < 2) return e;
+    const s = byId.get(e.src);
+    const t = byId.get(e.dst);
+    if (!s || !t || t.x < s.x + s.w + 20) return e;                  // only forward lines into a column to the right
+    const crosses = (pts: Pt[]) =>
+      nodes.some((n) => n.id !== s.id && n.id !== t.id && pts.some((p, k) => k > 0 && segCrossesRect(pts[k - 1], p, n, -2)));
+    if (!crosses(e.points)) return e;
+    const sy = s.y + s.h / 2;
+    const ty = t.y + t.h / 2;
+    const inner = e.points.slice(1, -1).filter((p) => p.x > s.x + s.w && p.x < t.x);
+    let mid: Pt[];
+    if (!inner.length) {
+      const key = Math.round(s.x + s.w);
+      const k = lane.get(key) ?? 0;
+      lane.set(key, k + 1);
+      const mx = (s.x + s.w + t.x) / 2 + ((k % 3) - 1) * 6;
+      mid = [{ x: mx, y: sy }, { x: mx, y: ty }];
+    } else {
+      mid = [{ x: inner[0].x, y: sy }];
+      for (const p of inner) {
+        const prev = mid[mid.length - 1];
+        if (p.x !== prev.x && p.y !== prev.y) {
+          const mx = (prev.x + p.x) / 2;
+          mid.push({ x: mx, y: prev.y }, { x: mx, y: p.y });
+        }
+        mid.push(p);
+      }
+      mid.push({ x: inner[inner.length - 1].x, y: ty });
+    }
+    const points = [{ x: s.x + s.w, y: sy }, ...mid, { x: t.x, y: ty }].filter(
+      (p, k, a) => k === 0 || p.x !== a[k - 1].x || p.y !== a[k - 1].y,
+    );
+    if (crosses(points)) return e;
+    const lp = mid[Math.floor(mid.length / 2)];
+    return { ...e, points, ortho: true, labelPos: e.labelPos ? { x: lp.x, y: lp.y } : null };
   });
-  const first = new Map<string, number>();     // group root -> earliest time a step of it was said
-  flow.steps.forEach((s) => {
-    const r = find(s.id);
-    first.set(r, Math.min(first.get(r) ?? Infinity, s.t));
-  });
-  const roots = [...first.entries()].sort((a, b) => a[1] - b[1]).map((e) => e[0]);
-  const rank = new Map(roots.map((r, i) => [r, i]));
-  return new Map(flow.steps.map((s) => [s.id, rank.get(find(s.id)) ?? 0]));
 }
 
 /**
- * Number the steps by following the arrows, one branch at a time (1 → 2 → 3 is always an arrow when the flow
- * allows it). Each flow starts at its entry step; leftovers (loops) follow in reading order.
+ * Step numbers never change once a box is on the map: number = the order the step was added (v6.5 run: numbers
+ * came from walking the graph, so every new branch renumbered the old boxes, e.g. "6" became "13").
  */
-function numbered(nodes: LaidNode[], rowOf: (n: LaidNode) => number, group: Map<string, number>, flow: FlowData): LaidNode[] {
-  const steps = nodes.filter((n): n is LaidStep => n.type === "step");
-  const byId = new Map(steps.map((n) => [n.id, n]));
-  const g = (n: LaidNode) => group.get(n.id) ?? 0;
-  const reading = (a: LaidStep, b: LaidStep) =>
-    g(a) - g(b) || rowOf(a) - rowOf(b) || Math.round(a.x) - Math.round(b.x) || a.y - b.y;
-  const out = new Map<string, { dst: string; t: number }[]>();
-  flow.links.forEach((l) => {
-    if (!byId.has(l.src) || !byId.has(l.dst) || l.src === l.dst) return;
-    out.set(l.src, [...(out.get(l.src) ?? []), { dst: l.dst, t: l.t }]);
+export function stepNumbers(flow: FlowData): Map<string, number> {
+  return new Map(flow.steps.map((s, i) => [s.id, i + 1]));
+}
+
+/** Put the fixed numbers on the boxes and on their connector chips. */
+function renumber(L: FlowLayout, nums: Map<string, number>): FlowLayout {
+  const nodes = L.nodes.map((n) => {
+    if (n.type !== "step") return n;
+    const jumps = n.jumps
+      ?.map((j) => ({ ...j, num: nums.get(j.id) ?? j.num }))
+      .sort((a, b) => a.num - b.num);
+    return { ...n, num: nums.get(n.id) ?? 0, ...(jumps ? { jumps } : {}) };
   });
-  // topological walk: the next number goes to a child of the step just numbered (first-said link first),
-  // a step where branches merge waits until all its inputs are numbered; loops fall back to reading order
-  const indeg = new Map(steps.map((n) => [n.id, 0]));
-  flow.links.forEach((l) => {
-    if (byId.has(l.src) && byId.has(l.dst) && l.src !== l.dst) indeg.set(l.dst, indeg.get(l.dst)! + 1);
-  });
-  const remaining = new Set(steps.map((n) => n.id));
-  const order: string[] = [];
-  let last: string | null = null as string | null;
-  while (remaining.size) {
-    const grp = Math.min(...[...remaining].map((id) => group.get(id) ?? 0));
-    const inGrp = [...remaining].map((id) => byId.get(id)!).filter((n) => g(n) === grp);
-    const ready = inGrp.filter((n) => indeg.get(n.id)! <= 0);
-    const kids: { dst: string; t: number }[] = last
-      ? (out.get(last) ?? [])
-          .filter((e) => remaining.has(e.dst) && indeg.get(e.dst)! <= 0)
-          .sort((a, b) => a.t - b.t || byId.get(a.dst)!.y - byId.get(b.dst)!.y)
-      : [];
-    const pick: LaidStep = kids.length ? byId.get(kids[0].dst)! : (ready.length ? ready : inGrp).sort(reading)[0];
-    remaining.delete(pick.id);
-    order.push(pick.id);
-    (out.get(pick.id) ?? []).forEach((e) => indeg.set(e.dst, indeg.get(e.dst)! - 1));
-    last = pick.id;
-  }
-  const num = new Map(order.map((id, i) => [id, i + 1]));
-  return nodes.map((n) => (n.type === "step" ? { ...n, num: num.get(n.id) ?? 0 } : n));
+  return { ...L, nodes };
 }
 
 type Pt = { x: number; y: number };
@@ -196,7 +203,7 @@ export function smoothPath(points: Pt[]): string {
 }
 
 export function edgePath(e: LaidEdge): string {
-  return e.wrapped || e.kind === "gap" ? orthoPath(e.points) : smoothPath(e.points);
+  return e.wrapped || e.ortho || e.kind === "gap" ? orthoPath(e.points) : smoothPath(e.points);
 }
 
 /** Word-wrap for SVG text (no layout engine there). */
@@ -230,10 +237,35 @@ const MARGIN = 16;
  * into rows ("snake") and keeps the fold that gives the biggest readable scale for the box.
  * Edges that cross into the next row are routed down through the gap between rows.
  */
-export function layoutFlow(
-  flow: FlowData,
-  box?: { w: number; h: number; enough?: number; widthOnly?: boolean },
-): FlowLayout {
+export function layoutFlow(flow: FlowData, box?: LayoutBox): FlowLayout {
+  const lanes = laneGroups(flow);
+  if (lanes.length <= 1) {
+    const one = layoutSingle(flow, box);
+    const label = lanes[0]?.label ?? "";
+    if (!label || !one.nodes.length) return one;
+    return stackLanes(flow, [{ lane: lanes[0], L: one }]);   // one named part: still show its name
+  }
+  const subs = lanes.map((lane) => ({ lane, sub: subFlow(flow, lane.ids) }));
+  if (!box || box.widthOnly) return stackLanes(flow, subs.map(({ lane, sub }) => ({ lane, L: layoutSingle(sub, box) })));
+  // a fixed box (report slide, first live fit): the bands are stacked, so fold every band to the same row width and
+  // keep the width that shows the whole stack biggest (folding each band as if it had the whole box made the
+  // stack tall and the text small)
+  const scale = (L: FlowLayout) => Math.min(box.w / Math.max(1, L.width), box.h / Math.max(1, L.height));
+  let best = stackLanes(flow, subs.map(({ lane, sub }) => ({ lane, L: layoutSingle(sub) })));
+  if (box.enough && scale(best) >= box.enough) return best;
+  const widest = best.width;
+  for (let k = 1; k <= 8; k++) {
+    const w = widest * (1 - k * 0.1);
+    if (w < STEP_W * 2) break;
+    const cand = stackLanes(flow, subs.map(({ lane, sub }) => ({ lane, L: layoutSingle(sub, { w, h: box.h, widthOnly: true }) })));
+    if (scale(cand) - 0.004 * cand.wrapped > scale(best) - 0.004 * best.wrapped + 0.01) best = cand;
+  }
+  return best;
+}
+
+type LayoutBox = { w: number; h: number; enough?: number; widthOnly?: boolean };
+
+function layoutSingle(flow: FlowData, box?: LayoutBox): FlowLayout {
   let base = layoutOnce(flow);
   if (!box || !base.nodes.length) return base;
   // widthOnly (big flows on the live map): fold so the rows fit the panel width at full size; the height may
@@ -302,9 +334,21 @@ function placeGap(st: Rect, others: Rect[], lines: Pt[][]): Rect {
     { x: st.x + (st.w - GAP_W) / 2, y: st.y - GAP_H - 22, w: GAP_W, h: GAP_H },
     { x: st.x + (st.w - GAP_W) / 2, y: st.y + st.h + 22, w: GAP_W, h: GAP_H },
   ];
+  // more spots in the column right of the step, further up and down
+  for (let k = 1; k <= 4; k++) {
+    for (const dir of [1, -1]) {
+      cands.push({ x: right, y: st.y + (st.h - GAP_H) / 2 + dir * k * (GAP_H + 14), w: GAP_W, h: GAP_H });
+    }
+  }
   const free = (c: Rect) =>
     !others.some((o) => overlaps(c, o)) && !lines.some((pts) => pts.some((p, i) => i > 0 && segCrossesRect(pts[i - 1], p, c)));
-  return cands.find(free) ?? cands.find((c) => !others.some((o) => overlaps(c, o))) ?? cands[0];
+  const hit = cands.find(free) ?? cands.find((c) => !others.some((o) => overlaps(c, o)));
+  if (hit) return hit;
+  // v6.5 run: every spot was taken and the box went on the first one anyway, on top of "Solve daily question".
+  // Last resort: under the lowest box of this column (the row grows), never on top of a box.
+  const x = st.x + (st.w - GAP_W) / 2;
+  const under = others.filter((o) => o.x < x + GAP_W + 8 && x < o.x + o.w + 8).map((o) => o.y + o.h);
+  return { x, y: Math.max(st.y + st.h, ...under) + 22, w: GAP_W, h: GAP_H };
 }
 
 /** Dashed arrow from a step to its gap box (side or top/bottom, whichever faces the gap). */
@@ -481,7 +525,7 @@ function fold(base: FlowLayout, centres: number[], k: number, flow: FlowData, lo
       labelPos: e.labelPos ? { x: e.labelPos.x + shift, y: e.labelPos.y } : null,
     }));
   }
-  nodes = numbered(nodes, (n) => rowOf.get(n.id) ?? 0, flowGroups(flow), flow);
+  nodes = renumber({ ...base, nodes }, stepNumbers(flow)).nodes;
   const chips = [...base.edges.filter((e) => jumpIds.has(e.id)), ...loops];
   if (chips.length) {
     const numOf = new Map(nodes.flatMap((n) => (n.type === "step" ? [[n.id, n]] : [])) as [string, LaidStep][]);
@@ -530,4 +574,137 @@ function withChips(L: FlowLayout, links: { src: string; dst: string }[]): FlowLa
 export function jumpText(n: LaidStep, max = 3): string {
   const j = n.jumps ?? [];
   return "↪ " + j.slice(0, max).map((x) => x.num).join(", ") + (j.length > max ? " …" : "");
+}
+
+// ---------------- parts of the product, one row band each ----------------
+// v6.5 run: a meeting about a website with five sections (daily practice, a $100 daily question, behavioral coaching,
+// system design, placement network) became one star around the first step, and folding the wide star into rows
+// cut every section into pieces on different rows. Each part now gets its own band; a part that is too wide for
+// the panel folds inside its own band only. Links between parts become connector chips ("↪ 7").
+
+export interface Lane { key: string; label: string; ids: Set<string>; t: number }
+const LANE_HEAD = 22;     // part name above its band
+const LANE_GAP = 10;
+
+const partKey = (p: string | null | undefined) => (p ?? "").trim().toLowerCase();
+
+/** Which part each step belongs to: the part the agent gave it, else the part of the step it comes after.
+ *  Old maps without parts: when the first step fans out into several branches, each branch is a part. */
+export function laneGroups(flow: FlowData): Lane[] {
+  const steps = flow.steps;
+  if (!steps.length) return [];
+  const ids = new Set(steps.map((s) => s.id));
+  const links = flow.links.filter((l) => ids.has(l.src) && ids.has(l.dst) && l.src !== l.dst).sort((a, b) => a.t - b.t);
+  const lane = new Map<string, string>();
+  const label = new Map<string, string>();
+  steps.forEach((s) => {
+    const k = partKey(s.part);
+    if (k) {
+      lane.set(s.id, k);
+      if (!label.has(k)) label.set(k, (s.part ?? "").trim());
+    }
+  });
+  if (!lane.size) deriveBranches(flow, links, lane);
+  // steps without a part take the part of the step before them (then of the step after them)
+  for (let pass = 0; pass < steps.length && lane.size < steps.length; pass++) {
+    let moved = false;
+    for (const s of steps) {
+      if (lane.has(s.id)) continue;
+      const from = links.find((l) => l.dst === s.id && lane.has(l.src));
+      const to = from ? undefined : links.find((l) => l.src === s.id && lane.has(l.dst));
+      const k = from ? lane.get(from.src) : to ? lane.get(to.dst) : undefined;
+      if (k !== undefined) {
+        lane.set(s.id, k);
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  steps.forEach((s) => !lane.has(s.id) && lane.set(s.id, ""));
+  const out = new Map<string, Lane>();
+  steps.forEach((s) => {
+    const k = lane.get(s.id)!;
+    const l = out.get(k) ?? { key: k, label: label.get(k) ?? "", ids: new Set<string>(), t: Infinity };
+    l.ids.add(s.id);
+    l.t = Math.min(l.t, s.t);
+    out.set(k, l);
+  });
+  return [...out.values()].sort((a, b) => a.t - b.t);
+}
+
+/** Old maps (no parts): a first step with 2+ branches = a hub; each branch (and what follows it) is a part. */
+function deriveBranches(flow: FlowData, links: FlowData["links"], lane: Map<string, string>) {
+  const hub = flow.steps.find((s) => s.kind === "start") ?? flow.steps[0];
+  const kids = links.filter((l) => l.src === hub.id && l.type !== "fail").map((l) => l.dst);
+  if (new Set(kids).size < 2) return;
+  const out = new Map<string, string[]>();
+  links.forEach((l) => out.set(l.src, [...(out.get(l.src) ?? []), l.dst]));
+  [...new Set(kids)].forEach((k, i) => {
+    const key = `branch${i}`;
+    const queue = [k];
+    while (queue.length) {
+      const id = queue.shift()!;
+      if (lane.has(id) || id === hub.id) continue;
+      lane.set(id, key);
+      queue.push(...(out.get(id) ?? []));
+    }
+    if (i === 0) lane.set(hub.id, key);      // the hub opens the first band
+  });
+}
+
+function subFlow(flow: FlowData, ids: Set<string>): FlowData {
+  return {
+    ...flow,
+    steps: flow.steps.filter((s) => ids.has(s.id)),
+    links: flow.links.filter((l) => ids.has(l.src) && ids.has(l.dst)),
+    bugs: flow.bugs.filter((b) => ids.has(b.step)),
+    gaps: flow.gaps.filter((g) => ids.has(g.step)),
+    contradictions: flow.contradictions.filter((c) => !c.step || ids.has(c.step)),
+  };
+}
+
+function stackLanes(flow: FlowData, parts: { lane: Lane; L: FlowLayout }[]): FlowLayout {
+  const nodes: LaidNode[] = [];
+  const edges: LaidEdge[] = [];
+  const lanes: LaidLane[] = [];
+  const named = parts.some((p) => p.lane.label);
+  let y = 0;
+  let rows = 0;
+  let wrapped = 0;
+  const width = Math.max(...parts.map((p) => p.L.width));
+  for (const { lane, L } of parts) {
+    if (!L.nodes.length) continue;
+    const head = named ? LANE_HEAD : 0;
+    // the band hugs its content (the sub-layout's own top/bottom margins would add up over many bands)
+    const ys = [...L.nodes.flatMap((n) => [n.y, n.y + n.h]), ...L.edges.flatMap((e) => e.points.map((p) => p.y))];
+    const top = Math.min(...ys);
+    const bottom = Math.max(...ys);
+    const dy = y + head + 8 - top;
+    lanes.push({ key: lane.key, label: lane.label, x: MARGIN, y, w: width, h: head + 8 + (bottom - top) + 6 });
+    L.nodes.forEach((n) => nodes.push({ ...n, y: n.y + dy }));
+    L.edges.forEach((e) =>
+      edges.push({ ...e, points: e.points.map((p) => ({ x: p.x, y: p.y + dy })), labelPos: e.labelPos ? { x: e.labelPos.x, y: e.labelPos.y + dy } : null }),
+    );
+    y = dy + bottom + 6 + LANE_GAP;
+    rows += L.rows;
+    wrapped += L.wrapped;
+  }
+  // links between parts: a connector chip on the box they start from (click jumps there)
+  const laneOf = new Map<string, string>();
+  parts.forEach((p) => p.lane.ids.forEach((id) => laneOf.set(id, p.lane.key)));
+  const nums = stepNumbers(flow);
+  const cross = flow.links.filter((l) => laneOf.has(l.src) && laneOf.has(l.dst) && laneOf.get(l.src) !== laneOf.get(l.dst));
+  const byId = new Map(flow.steps.map((s) => [s.id, s]));
+  const withJumps = nodes.map((n) => {
+    if (n.type !== "step") return n;
+    const extra = cross.filter((l) => l.src === n.id).map((l) => ({ id: l.dst, num: nums.get(l.dst) ?? 0, label: byId.get(l.dst)?.label ?? "" }));
+    if (!extra.length) return n;
+    const jumps = [...(n.jumps ?? []), ...extra].filter((j, i, a) => a.findIndex((x) => x.id === j.id) === i).sort((a, b) => a.num - b.num);
+    return { ...n, jumps };
+  });
+  const openGaps = flow.gaps.filter((g) => !g.resolved && !g.dismissed);
+  return renumber(
+    { nodes: withJumps, edges, width, height: Math.max(0, y - LANE_GAP), openGaps, rows, wrapped: wrapped + cross.length, lanes },
+    nums,
+  );
 }

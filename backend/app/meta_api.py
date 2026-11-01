@@ -168,6 +168,10 @@ class MetaClient:
                 return _mock_flow_json(user, history)
             if schema_name == "verify_conflict":
                 return {"same_fact": True, "a_is_about": "mock", "b_is_about": "mock"}
+            if schema_name == "gap_status":         # mock: gaps stay open
+                return {"status": "open", "line": "", "answer": "", "new_question": "", "why": "mock"}
+            if schema_name == "verify_flow":        # mock: never blocks (already_answered = no, link/answer = yes)
+                return {"yes": "already_answered" not in user, "why": "mock", "line": ""}
             return _mock_spark(user, schema_name)
         last = None
         for attempt in range(3):

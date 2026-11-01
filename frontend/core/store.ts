@@ -32,7 +32,7 @@ export interface FlowStatus {
 }
 
 /** Flow events worth a callout (steps/links just highlight on the map). */
-const FLOW_CALLOUT = new Set(["gap", "gap_resolved", "contradiction", "contradiction_resolved", "bug", "bug_fixed"]);
+const FLOW_CALLOUT = new Set(["gap", "gap_resolved", "gap_removed", "contradiction", "contradiction_resolved", "bug", "bug_fixed"]);
 
 export interface SparkRound {
   state: "idle" | "thinking" | "error";

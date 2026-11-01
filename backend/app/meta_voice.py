@@ -5,6 +5,10 @@ Rules from the Oct 27 test:
 - Never burst (e.g. a reconnect resend) -> pacer sends at most PACER_LEAD_S ahead of real time.
 - A Meta session lasts max 60 min and cannot resume -> rotate before that; a new
   session means new speaker labels (shown as "A·2").
+- Oct 29 run: Meta closed a session with "Ingress audio slower than real-time" in the middle of a turn and that
+  turn was lost -> the audio Meta has not finished yet is sent again to the new session (AudioBuffer.requeue),
+  and pacer stalls are logged so the cause shows next time.
+- Line times: each turn gets the meeting time its speech STARTED (from speechStart), not when the final text came.
 """
 from __future__ import annotations
 
@@ -70,6 +74,8 @@ class VoiceStream:
         self._stop = asyncio.Event()
         self._task: asyncio.Task | None = None
         self.sent_bytes_total = 0
+        self.stalls = 0                     # pacer ticks that came > 1 s late (event loop or network blocked)
+        self._turn_start: dict[str, int] = {}   # open turns of this session: turn id -> start offset (bytes)
 
     def start(self):
         if not self._task:
@@ -101,13 +107,24 @@ class VoiceStream:
         failures = 0
         while not self._stop.is_set():
             self.gen += 1
+            error = ""
             try:
                 await self.on_event("status", {"voice": "connecting", "gen": self.gen})
                 clean = await self._one_session()
                 failures = 0 if clean else failures + 1
+                if not clean:
+                    error = "closed without finishing"
             except Exception as e:  # noqa: BLE001
                 failures += 1
+                error = str(e)[:300]
+                clean = False
                 log.warning("voice session %d failed: %s", self.gen, e)
+            # what Meta never finished in this session is sent again to the next one (not after Stop)
+            resent = 0 if (clean or self._stop.is_set()) else self.audio.requeue_unconfirmed()
+            if resent:
+                log.info("voice session %d: %.1f s of unfinished audio will be sent again", self.gen, resent / BYTES_PER_SEC)
+            await self.on_event("gen_end", {"gen": self.gen, "resent_s": round(resent / BYTES_PER_SEC, 1),
+                                            "error": error, "stalls": self.stalls})
             if self._stop.is_set():
                 break
             if failures:
@@ -129,6 +146,7 @@ class VoiceStream:
         self._speaker = None                  # labels restart with every Meta session
         self._speaker_by_turn: dict[str, str] = {}
         self._turn = None                     # partials carry no turnId: take it from speechStart
+        self._turn_start = {}
         url = f"{settings.meta_asr_url}?sessionId=mc-{uuid.uuid4()}"
         async with websockets.connect(url, max_size=2**22, open_timeout=30,
                                       ping_interval=20, ping_timeout=20) as ws:
@@ -160,6 +178,8 @@ class VoiceStream:
                         raise RuntimeError(data["message"])
                     if kind == "turn_start":
                         self._turn = data["turn"]
+                        if data["turn"] is not None:
+                            self._turn_start[data["turn"]] = self.speech_start_offset()
                     elif kind == "speaker":
                         # Meta sends the label at the END of a turn (just before speechComplete)
                         self._speaker = data["label"]
@@ -167,6 +187,9 @@ class VoiceStream:
                             self._speaker_by_turn[data["turn"]] = data["label"]
                     elif kind in ("partial", "final"):
                         data["turn"] = data["turn"] or self._turn
+                        start = self._turn_start.get(data["turn"] or "")
+                        if start is not None:
+                            data["t_start"] = round(start / BYTES_PER_SEC, 1)
                         if kind == "partial":
                             data["speaker"] = None        # not known yet while the person is talking
                         else:
@@ -174,7 +197,10 @@ class VoiceStream:
                                                or self._speaker)
                         if kind == "final" and data["turn"]:
                             self._speaker_by_turn.pop(data["turn"], None)
+                            self._turn_done(data["turn"])
                         await self.on_event(kind, self._label(data))
+                        if kind == "final":
+                            self._confirm()
             finally:
                 sender.cancel()
                 try:
@@ -184,6 +210,25 @@ class VoiceStream:
             code = ws.close_code
             log.info("voice session %d closed code=%s reason=%s", self.gen, code, ws.close_reason)
             return ending.is_set() and code in (1000, None)
+
+    def speech_start_offset(self) -> int:
+        """Meeting-clock offset (bytes) where the speech that Meta just detected started."""
+        off = self.audio.front - int(settings.speech_start_lag_s * BYTES_PER_SEC)
+        return max(0, off - off % 2)
+
+    def _turn_done(self, turn: str):
+        done = self._turn_start.pop(turn, None)
+        if done is not None:          # older turns that never got a final won't get one now
+            self._turn_start = {k: v for k, v in self._turn_start.items() if v > done}
+
+    def _confirm(self):
+        """A turn finished: audio before the oldest still-open turn never has to be sent again
+        (a small margin is kept for speech that started but isn't detected yet)."""
+        if self._turn_start:
+            until = min(self._turn_start.values())
+        else:
+            until = self.audio.front - int(0.7 * BYTES_PER_SEC)
+        self.audio.confirm_until(until)
 
     def _label(self, data: dict) -> dict:
         sp = data.get("speaker")
@@ -202,7 +247,16 @@ class VoiceStream:
         grace = int(settings.pacer_grace_s * BYTES_PER_SEC)
         started = time.monotonic()
         sent = 0
+        base = self.sent_bytes_total            # all sessions together (debug: audio + silence sent to Meta)
+        last_tick = started
         while True:
+            now = time.monotonic()
+            if now - last_tick > 1.0:
+                self.stalls += 1
+                log.warning("voice pacer stalled %.1f s (gen %d): the event loop or the network was blocked",
+                            now - last_tick, self.gen)
+                await self.on_event("debug", {"pacer_stall_s": round(now - last_tick, 1), "gen": self.gen})
+            last_tick = now
             elapsed = time.monotonic() - started
             if self._stop.is_set() or elapsed >= settings.voice_session_max_s:
                 ending.set()
@@ -217,14 +271,18 @@ class VoiceStream:
             due = int(elapsed * BYTES_PER_SEC) - sent
             out = self.audio.take(max(0, due + lead))
             if out:
+                t_send = time.monotonic()
                 await ws.send(out)
+                if time.monotonic() - t_send > 0.5:
+                    log.warning("voice: sending %.1f s of audio to Meta took %.1f s (slow upload?)",
+                                len(out) / BYTES_PER_SEC, time.monotonic() - t_send)
                 sent += len(out)
                 due -= len(out)
             if due > grace:                       # browser late / paused / disconnected
                 n = due - (due % 2)
                 await ws.send(b"\x00" * n)
                 sent += n
-            self.sent_bytes_total = sent
+            self.sent_bytes_total = base + sent
             await asyncio.sleep(tick)
 
     async def _mock_session(self) -> bool:
@@ -232,9 +290,13 @@ class VoiceStream:
         n = 0
         while not self._stop.is_set():
             await asyncio.sleep(3)
-            self.audio.take(10 * BYTES_PER_SEC)
+            self.sent_bytes_total += len(self.audio.take(10 * BYTES_PER_SEC))
             n += 1
             sp, text = MOCK_LINES[(n - 1) % len(MOCK_LINES)]     # scripted client meeting (sofa shop app)
-            await self.on_event("partial", self._label({"text": text[:20], "speaker": sp, "turn": str(n)}))
-            await self.on_event("final", self._label({"text": text, "speaker": sp, "turn": str(n)}))
+            t_start = round(max(0.0, self.audio.front / BYTES_PER_SEC - 2.5), 1)
+            await self.on_event("partial", self._label({"text": text[:20], "speaker": sp, "turn": str(n),
+                                                        "t_start": t_start}))
+            await self.on_event("final", self._label({"text": text, "speaker": sp, "turn": str(n),
+                                                      "t_start": t_start}))
+            self.audio.confirm_until(self.audio.front)
         return True

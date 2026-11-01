@@ -129,8 +129,12 @@ export function CardModal({
                   )}
                 </dl>
                 <p className="modal-time">
-                  <Clock size={13} aria-hidden /> Said at {fmtTime(card.t)}
-                  {card.updated_t != null && <> · updated at {fmtTime(card.updated_t)}</>}
+                  <Clock size={13} aria-hidden /> {card.flow_ref ? "Found at" : "Said at"} {fmtTime(card.t)}
+                  {card.column === "questions" && card.resolved && card.answer_t != null ? (
+                    <> · answered at {fmtTime(card.answer_t)}</>
+                  ) : (
+                    card.updated_t != null && <> · updated at {fmtTime(card.updated_t)}</>
+                  )}
                   {card.user_locked && <> · edited by you</>}
                 </p>
                 {!readOnly && (

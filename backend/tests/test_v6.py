@@ -52,7 +52,10 @@ def test_both_sides_of_a_conflict_are_tagged_and_freed_when_settled():
     tagged = {c.title for c in b.cards.values() if c.conflict_ref}
     assert tagged == {"Offer five sessions for $1000", "Offer seven sessions for $1400"} and len(changed) == 2
     assert all(x.get("conflict") for x in b.for_spark() if x["title"] in tagged)
-    f.apply("resolve", {"item_id": "c1", "answer": "seven", "quote": "I think we'll make seven sessions"}, LINES, 520)
+    # v6.8: settled only by a LATER line that picks one (the "seven sessions" line itself is one side of the conflict)
+    assert not f.apply("resolve", {"item_id": "c1", "answer": "seven", "quote": "I think we'll make seven sessions"}, LINES, 520).ok
+    lines = LINES + [{"id": 3, "speaker": "B", "t": 430.0, "text": "Okay so seven sessions for 1400, forget the five."}]
+    assert f.apply("resolve", {"item_id": "c1", "answer": "seven", "quote": "so seven sessions for 1400, forget the five"}, lines, 520).ok
     b.link_conflicts(list(f.contradictions.values()))
     assert not any(c.conflict_ref for c in b.cards.values())
 

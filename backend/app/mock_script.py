@@ -52,7 +52,7 @@ def _calls_for_line(text: str, flow: dict) -> list[tuple[str, dict]]:
         flow.setdefault("steps", []).append({"id": label, "label": label, "kind": "step"})   # chain within one batch
         return [("add_step", args)]
     if "home screen with categories" in t:
-        out.append(("add_step", {"label": "Home screen", "kind": "start",
+        out.append(("add_step", {"label": "Home screen", "kind": "start", "part": "Shopping",
                                  "quote": "lands on the home screen with categories"}))
     elif "see the product page" in t:
         out.append(("add_step", {"label": "Product page", "kind": "step", "after": "Home screen",
@@ -80,6 +80,9 @@ def _calls_for_line(text: str, flow: dict) -> list[tuple[str, dict]]:
                                            "quote_b": "the code is valid for ten minutes",
                                            "note": "OTP expiry: five minutes or ten minutes?", "step": "OTP login"}))
     elif "admin panel" in t:
+        # another part of the product: its first step has a part name and no "after" (drawn as its own row)
+        out.append(("add_step", {"label": "Update stock", "kind": "step", "part": "Admin panel",
+                                 "quote": "move on to the admin panel for stock updates"}))
         out.append(("flag_gap", {"step": "Checkout & pay", "missing_branch": "payment fails",
                                  "question": "What happens if the card payment fails?",
                                  "quote": "Then they go to checkout and pay by card"}))
@@ -110,6 +113,10 @@ def _plan(payload: dict) -> list[tuple[str, dict]]:
     if payload.get("mode") in ("gap_review", "gap_check", "final"):
         labels = {s["label"] for s in flow.get("steps", [])}
         asked = " ".join(g["question"].lower() for g in flow.get("gaps", []))
+        if "Checkout & pay" in labels and "payment fails" not in asked:
+            calls.append(("flag_gap", {"step": "Checkout & pay", "missing_branch": "payment fails",
+                                       "question": "What happens if the card payment fails?",
+                                       "quote": "Then they go to checkout and pay by card"}))
         if "OTP login" in labels and "otp is wrong" not in asked:
             calls.append(("flag_gap", {"step": "OTP login", "missing_branch": "wrong OTP",
                                        "question": "What happens if the OTP is wrong?",

@@ -79,6 +79,7 @@ type StepData = {
   onJump: (id: string) => void;
 };
 type GapData = { gap: FlowGap; fresh: boolean; selected: boolean; focused: boolean };
+type LaneData = { label: string };
 
 const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
   const { step, num, bugs, conflicts, note, fresh, selected, focused, jumps, onJump } = data;
@@ -161,6 +162,11 @@ const GapNode = memo(function GapNode({ data }: NodeProps<Node<GapData>>) {
   );
 });
 
+// one band per part of the product ("Behavioral coaching"): drawn behind its boxes
+const LaneNode = memo(function LaneNode({ data }: NodeProps<Node<LaneData>>) {
+  return <div className="fm-lane">{data.label && <span className="fm-lane-label">{data.label}</span>}</div>;
+});
+
 // ---------------- edges ----------------
 // Draws the route computed in flowLayout (same as the report), so folded rows never cut through a box.
 type RoutedData = { laid: LaidEdge; tone: "normal" | "fail" | "gap" };
@@ -185,7 +191,7 @@ const RoutedEdge = memo(function RoutedEdge({ id, data, markerEnd, style, source
   );
 });
 
-const NODE_TYPES = { step: StepNode, gap: GapNode };
+const NODE_TYPES = { step: StepNode, gap: GapNode, lane: LaneNode };
 const EDGE_TYPES = { routed: RoutedEdge };
 
 // ---------------- layout ----------------
@@ -206,7 +212,19 @@ function buildGraph(
   if (!fits) L = layoutFlow(flow, { w: box.w / 0.88, h: box.h, widthOnly: true });
   const fresh = (id: string) => !!flash[id] && now - flash[id] < FLASH_MS;
   const focused = (nodeId: string) => !!pulse && pulse.id === nodeId && now - pulse.at < PULSE_MS;
-  const nodes: Node[] = L.nodes.map((n) =>
+  const lanes: Node[] = (L.lanes ?? []).map((l) => ({
+    id: `lane:${l.key || "-"}`,
+    type: "lane",
+    position: { x: l.x - 8, y: l.y },
+    data: { label: l.label } satisfies LaneData,
+    width: l.w - l.x + 16,
+    height: l.h + 8,
+    draggable: false,
+    selectable: false,
+    focusable: false,
+    zIndex: -1,
+  }));
+  const nodes: Node[] = [...lanes, ...L.nodes.map((n) =>
     n.type === "step"
       ? {
           id: n.id,
@@ -243,7 +261,7 @@ function buildGraph(
           height: n.h,
           draggable: false,
         },
-  );
+  )];
   const edges: Edge[] = L.edges.map((e) => {
     const color = e.kind === "fail" ? "#dc2626" : e.kind === "gap" ? "#d97706" : "#7c8597";
     return {
@@ -502,6 +520,7 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
               maxZoom={1.6}
               attributionPosition="bottom-left"
               onNodeClick={(_, n) => {
+                if (n.type === "lane") return;
                 if (n.type === "gap") setSel({ kind: "gap", id: n.id.slice(4) });
                 else setSel({ kind: "step", id: n.id });
               }}
@@ -524,7 +543,7 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
                   ariaLabel="Whole flow"
                   nodeBorderRadius={6}
                   nodeColor={(n) =>
-                    n.type === "gap" ? "#f5c26b" : (n.data as StepData).bugs ? "#f08b8b" : (n.data as StepData).fresh ? "#818cf8" : "#cfd4dc"
+                    n.type === "lane" ? "transparent" : n.type === "gap" ? "#f5c26b" : (n.data as StepData).bugs ? "#f08b8b" : (n.data as StepData).fresh ? "#818cf8" : "#cfd4dc"
                   }
                   maskColor="rgba(240, 242, 245, 0.65)"
                   style={{ width: 132, height: 92 }}

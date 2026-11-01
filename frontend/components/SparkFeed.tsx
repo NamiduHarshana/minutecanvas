@@ -25,6 +25,7 @@ function changes(a: Card, b: Card): string[] {
 const FLOW_HEAD: Partial<Record<FlowEvent["kind"], { text: string; color: string; Icon: typeof Sparkles }>> = {
   gap: { text: "Flow Map found a gap", color: "#d97706", Icon: CircleHelp },
   gap_resolved: { text: "Gap answered", color: "#16a34a", Icon: CircleCheckBig },
+  gap_removed: { text: "Not a gap after all", color: "#667085", Icon: CircleCheckBig },
   contradiction: { text: "Conflicting statements", color: "#dc2626", Icon: TriangleAlert },
   contradiction_resolved: { text: "Conflict settled", color: "#16a34a", Icon: CircleCheckBig },
   bug: { text: "Bug pinned on the flow", color: "#dc2626", Icon: Bug },

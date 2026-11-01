@@ -18,6 +18,8 @@ class FakeASR:
 
     def __init__(self, emit_every_s: float = 2.0):
         self.emit_every = emit_every_s
+        self.fail_first_at_s: float | None = None   # session 1 dies mid-turn after this much audio (real Oct 29 error)
+        self.per_session: list[int] = []
         self.handshakes: list[dict] = []
         self.sessions = 0
         self.received = 0
@@ -47,6 +49,8 @@ class FakeASR:
         got = 0
         next_emit = self.emit_every * BPS
         turn = 0
+        self.per_session.append(0)
+        me = len(self.per_session) - 1
         try:
             async for msg in ws:
                 if isinstance(msg, str):
@@ -63,7 +67,14 @@ class FakeASR:
                     continue
                 got += len(msg)
                 self.received += len(msg)
+                self.per_session[me] += len(msg)
                 el = time.monotonic() - start
+                if me == 0 and self.fail_first_at_s and got / BPS >= self.fail_first_at_s:
+                    await ws.send(json.dumps({"type": "speechStart", "turnId": 500}))
+                    await ws.send(json.dumps({"type": "transcript", "transcript": " Half a sentence that", "final": False}))
+                    await ws.send(json.dumps({"type": "error", "message": "Ingress audio slower than real-time"}))
+                    await ws.close(1011)
+                    return
                 self.max_lead_s = max(self.max_lead_s, got / BPS - el)
                 if el > 2 and got / BPS < el - 1.5:
                     self.min_lag_violation = True
@@ -90,7 +101,12 @@ WEBP_1PX = base64.b64decode("UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3A
 
 
 def _flow_calls_for(payload: dict) -> list[tuple[str, dict]]:
-    """Fake Flow agent: one bad quote on purpose (must be rejected), the rest real."""
+    """Fake Flow agent: one bad quote on purpose (must be rejected), the rest real. The gap comes in the final pass
+    (v6.6: a gap on the step the group is still talking about is rejected in live rounds)."""
+    steps = {s.get("label") for s in (payload.get("current_flow") or {}).get("steps", [])}
+    if payload.get("mode") in ("final", "gap_review") and "Send docs" in steps:
+        return [("flag_gap", {"step": "Send docs", "missing_branch": "docs late", "question": "What if the docs are late",
+                              "quote": "and Kasun will send docs"})]
     if payload.get("mode") != "live":
         return []
     if not any("ship the login API" in x for x in payload.get("new_transcript", [])):
@@ -100,8 +116,6 @@ def _flow_calls_for(payload: dict) -> list[tuple[str, dict]]:
         ("add_step", {"label": "Send docs", "kind": "step", "after": "Ship login API", "link_label": "then",
                       "quote": "Kasun will send docs"}),
         ("add_step", {"label": "Invented step", "kind": "step", "quote": "this sentence was never said in the meeting"}),
-        ("flag_gap", {"step": "Send docs", "missing_branch": "docs late", "question": "What if the docs are late",
-                      "quote": "and Kasun will send docs"}),
     ]
 
 
@@ -138,6 +152,10 @@ def fake_http(spark_calls: list, image_calls: list, reject_extras: bool = True,
                 turn = sum(1 for m in body["messages"] if m["role"] == "assistant")
                 calls = _flow_calls_for(json.loads(body["messages"][1]["content"])) if turn == 0 else []
                 content = {"calls": [{"name": n, "arguments": json.dumps(a)} for n, a in calls]}
+                return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(content)}}]})
+            if name in ("verify_flow", "verify_conflict"):           # second opinions: never block in these tests
+                content = ({"yes": "already_answered" not in body["messages"][1]["content"], "why": "ok", "line": ""}
+                           if name == "verify_flow" else {"same_fact": True, "a_is_about": "x", "b_is_about": "x"})
                 return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(content)}}]})
             spark_calls.append(body)
             if name == "summary":

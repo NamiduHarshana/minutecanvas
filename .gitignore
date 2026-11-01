@@ -221,3 +221,7 @@ __marimo__/
 
 # MinuteCanvas local debug dumps (transcripts)
 backend/debug/
+
+# test bench: results and the transcripts of other people's recordings (never pushed)
+backend/bench/out/
+backend/bench/private/

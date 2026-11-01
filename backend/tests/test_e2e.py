@@ -296,6 +296,11 @@ async def test_flow_json_fallback_and_gap_card_sync(server):
         await b.ws.send((len(b.captured) - 4800).to_bytes(8, "little") + bytes(b.captured[-4800:]))
         await asyncio.sleep(max(0, t0 + (i + 1) * 0.1 - time.monotonic()))
     for _ in range(100):
+        if b.of("flow") and len(b.of("flow")[-1]["flow"]["steps"]) == 2:
+            break
+        await asyncio.sleep(0.1)
+    await b.ws.send(json.dumps({"type": "gap_review"}))     # v6.6: gaps on the topic just said come from a check
+    for _ in range(100):
         if b.of("flow") and b.of("flow")[-1]["flow"]["gaps"]:
             break
         await asyncio.sleep(0.1)

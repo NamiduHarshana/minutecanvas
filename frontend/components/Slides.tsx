@@ -362,9 +362,14 @@ function AnsweredSlide({ slide }: { slide: Extract<Slide, { kind: "answered" }> 
                 <CircleCheckBig size={15} aria-hidden /> {q.answer || "Answered"}
               </p>
             </div>
-            <span className="ans-time">
+            <span
+              className="ans-time"
+              title={`${q.flow_ref ? "Found" : "Asked"} at ${fmtTime(q.t)}${
+                (q.answer_t ?? q.updated_t) != null ? `, answered at ${fmtTime((q.answer_t ?? q.updated_t)!)}` : ""
+              }`}
+            >
               {fmtTime(q.t)}
-              {q.updated_t != null && ` → ${fmtTime(q.updated_t)}`}
+              {(q.answer_t ?? q.updated_t) != null && ` → ${fmtTime((q.answer_t ?? q.updated_t)!)}`}
             </span>
           </div>
         ))}

@@ -5,7 +5,7 @@ import re
 import uuid
 from dataclasses import asdict, dataclass, field
 
-from .flow import _stems
+from .flow import _stems, spoken_numbers
 from .security import clean_optional, clean_text
 
 COLUMNS = ("goals", "decisions", "actions", "updates", "questions")
@@ -32,6 +32,7 @@ class Card:
     done: bool = False               # actions: ✓ done
     resolved: bool = False           # questions
     answer: str | None = None        # questions: how it was resolved
+    answer_t: float | None = None    # questions: meeting time of the answer (the line that answered it, if known)
     t: float = 0.0                   # meeting time (s) when created
     updated_t: float | None = None   # meeting time (s) of last AI update
     image_url: str | None = None
@@ -73,18 +74,12 @@ def _similar(a: str, b: str) -> bool:
     return len(x & y) / len(x | y) >= 0.75
 
 
-_NUM_WORDS = {w: str(i) for i, w in enumerate(
-    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
-    "sixteen seventeen eighteen nineteen twenty".split())}
-_NUM_WORDS.update({"thirty": "30", "forty": "40", "fifty": "50", "sixty": "60", "seventy": "70",
-                   "eighty": "80", "ninety": "90", "hundred": "100", "thousand": "1000"})
-
-
 def numbers(s: str) -> set[str]:
-    """Numbers in a text, normalised ("$1,000" -> "1000", "five" -> "5"); used to tie cards to conflicts."""
+    """Numbers in a text, normalised ("$1,000" -> "1000", "five" -> "5", "twenty four" -> "24"); used to tie cards to
+    conflicts. v6.7.2 bench: word by word, "twenty four hours" gave {20, 4} and never matched a "24 hours" card."""
     s = (s or "").lower()
     out = {m.replace(",", "") for m in re.findall(r"\d[\d,]*(?:\.\d+)?", s)}
-    out.update(_NUM_WORDS[w] for w in re.findall(r"[a-z]+", s) if w in _NUM_WORDS)
+    out.update(str(v) for _, _, v in spoken_numbers(re.findall(r"\d[\d,]*(?:\.\d+)?|[a-z]+", s)))
     out.update(str(int(float(m) * 1000)) for m in re.findall(r"(\d+(?:\.\d+)?)\s*k\b", s))
     return out
 
@@ -204,6 +199,7 @@ class Board:
                 c.resolved = True
                 c.answer = clean_optional(r.get("answer"), ANSWER_MAX)
                 c.updated_t = now_t
+                c.answer_t = round(now_t, 1)
                 if c not in ch.updated:
                     ch.updated.append(c)
 
@@ -286,6 +282,8 @@ class Board:
             c.done = bool(fields["done"])
         if "resolved" in fields and c.column == "questions":
             c.resolved = bool(fields["resolved"])
+            if not c.resolved:
+                c.answer_t = None
         c.user_locked = True
         return c
 
@@ -316,13 +314,15 @@ class Board:
         self.order.append(c.id)
         return c, True
 
-    def resolve_gap_question(self, card_id: str | None, answer: str | None, now_t: float) -> Card | None:
+    def resolve_gap_question(self, card_id: str | None, answer: str | None, now_t: float,
+                             answer_t: float | None = None) -> Card | None:
         c = self.cards.get(card_id or "")
         if not c or c.resolved:
             return None
         c.resolved = True
         c.answer = answer or c.answer
         c.updated_t = round(now_t, 1)
+        c.answer_t = round(answer_t if answer_t is not None else now_t, 1)
         return c
 
     # ---------- Flow Map contradictions -> cards ----------

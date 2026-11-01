@@ -610,6 +610,12 @@ h1, h2, h3, h4, p { margin: 0; }
 
 .flow-ref-btn { margin-top: 10px; color: #b45309; border-color: #f5d9a8; background: #fffaf0; }
 .conflict-ref-btn { margin-top: 10px; color: #b45309; border-color: #f1c27d; background: #fff4e0; }
+/* long labels wrap inside the modal instead of running past its right edge */
+.flow-ref-btn, .conflict-ref-btn {
+  white-space: normal; height: auto; min-height: 34px; padding: 7px 12px; line-height: 1.35;
+  text-align: left; justify-self: start; max-width: 100%;
+}
+.flow-ref-btn svg, .conflict-ref-btn svg { flex-shrink: 0; }
 
 /* ---------- Live Flow Map ---------- */
 .fm {
@@ -730,6 +736,9 @@ h1, h2, h3, h4, p { margin: 0; }
 }
 .fm-elabel.fail { color: #b91c1c; border-color: #fbcaca; }
 
+/* one band per part of the product (v6.6) */
+.fm-lane { width: 100%; height: 100%; border-radius: 14px; background: rgba(248, 249, 251, 0.9); border: 1px solid #e7eaf0; pointer-events: none; }
+.fm-lane-label { position: absolute; left: 14px; top: 6px; font-size: 11.5px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: #475467; }
 .fm-gap {
   width: 186px; height: 54px; display: flex; align-items: center; gap: 8px; padding: 6px 10px;
   border: 1.5px dashed var(--amber); border-radius: 10px; background: #fffaf0; color: #b45309;

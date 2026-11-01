@@ -72,6 +72,14 @@ class Settings:
     # second-opinion check before a contradiction is shown (a separate Spark call that sees both lines in context)
     verify_conflicts: bool = field(default_factory=lambda: _env("VERIFY_CONFLICTS", "1") != "0")
     max_conflict_checks: int = field(default_factory=lambda: _int("MAX_CONFLICT_CHECKS", 12))
+    # second-opinion checks on the Flow Map: "does this line really answer the gap?" and "was this gap already
+    # answered anywhere in the meeting?" (the v6.5 arrow check was removed: it rejected right arrows, see session.py)
+    verify_flow: bool = field(default_factory=lambda: _env("VERIFY_FLOW", "1") != "0")
+    max_flow_checks: int = field(default_factory=lambda: _int("MAX_FLOW_CHECKS", 40))
+    # every automatic gap check also re-checks the open gaps against everything said since (answered later -> answered,
+    # answered before it was flagged -> removed, renamed -> question updated); max this many gaps per check
+    recheck_gaps: bool = field(default_factory=lambda: _env("RECHECK_GAPS", "1") != "0")
+    max_gap_rechecks: int = field(default_factory=lambda: _int("MAX_GAP_RECHECKS", 5))
     gap_review_cooldown_s: float = field(default_factory=lambda: _float("GAP_REVIEW_COOLDOWN_S", 30.0))
     # automatic gap check during the meeting (live rounds only see ~45 s, so gaps need a wider look); 0 = off
     auto_gap_check_s: float = field(default_factory=lambda: _float("AUTO_GAP_CHECK_S", 240.0))
@@ -90,6 +98,11 @@ class Settings:
     pacer_lead_s: float = field(default_factory=lambda: _float("PACER_LEAD_S", 0.5))
     pacer_grace_s: float = field(default_factory=lambda: _float("PACER_GRACE_S", 0.3))
     max_backlog_s: float = field(default_factory=lambda: _float("MAX_BACKLOG_S", 60.0))
+    # Meta dropped the voice session mid-turn: resend at most this much unconfirmed audio to the new session
+    voice_resend_max_s: float = field(default_factory=lambda: _float("VOICE_RESEND_MAX_S", 45.0))
+    # a transcript line's time = when the speech started: Meta's speechStart comes this long after the audio
+    # (0.5 s pacer lead + voice detection)
+    speech_start_lag_s: float = field(default_factory=lambda: _float("SPEECH_START_LAG_S", 1.0))
 
     # DEBUG_DUMP=1 (local testing only): writes transcript + every Spark call to backend/debug/<session>.json
     debug_dump: bool = field(default_factory=lambda: _env("DEBUG_DUMP") == "1")

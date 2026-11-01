@@ -24,6 +24,19 @@ python scripts/live_test.py meeting.wav --seconds 120 --keywords "Claude,MinuteC
 First real run: set `DEBUG_VOICE=1` to log raw Meta voice messages.
 `DEBUG_DUMP=1` (local testing only) saves the transcript and every Spark call (request + answer) to `backend/debug/<session>.json` (git-ignored).
 
+### Transcript test bench (real Spark, no audio, no images)
+Runs scripted meetings (`bench/meetings.py`, each with an answer key) through the real Cards + Flow pipeline and
+scores steps, arrows, arrows between parts, real / false gaps, real / false conflicts, stale cards and the layout.
+A 30-min meeting takes a few minutes. Costs only Spark calls (the total is printed).
+```bash
+python -m bench.bench                                   # all meetings
+python -m bench.bench --only grooming_app               # one meeting
+python -m bench.bench --extract debug/<run>.json leetcode_site   # add a live run's transcript (kept out of git)
+python -m bench.bench --score debug/<run>.json --meeting leetcode_site   # score a live run, 0 credits
+python scripts/replay.py debug/<run>.json               # re-apply a run's Flow calls to the current code, 0 credits
+```
+The layout part runs on any Node 18+ (`node scripts/run-ts.mjs scripts/layoutcheck.ts …` in frontend/, needs `npm install` there once); without Node it says "skipped".
+
 ## Deploy (Cloud Run, us-central1)
 
 ```bash
@@ -74,6 +87,7 @@ Tools: `add_step` · `link_steps` · `update_step` · `report_bug` · `flag_gap`
 - `gap_review` runs a review pass now (cooldown `GAP_REVIEW_COOLDOWN_S`); Stop runs a final pass.
 - While recording, an automatic `gap_check` pass runs every `AUTO_GAP_CHECK_S` (default 240 s, 0 = off) once the map has 3+ steps and changed since the last check (max 1 new gap). Live rounds only see ~45 s of talk; a missing path shows only after the group moves on.
 - The Flow agent also gets older lines that mention numbers, so a price said 20 minutes ago is compared with a new one (contradictions).
+- A contradiction is settled only by a later line where the group picks one value (code rejects the agent quoting one of the two conflicting lines; a second-opinion call checks the rest, `VERIFY_FLOW=1`).
 - Cards that state one side of an open contradiction get `Card.conflict_ref` (shown as "Not decided" / "Conflict"); they leave the report's Decisions until it is settled.
 - If the API rejects `tools`, the agent switches to the same calls as JSON (`FLOW_JSON_SCHEMA`) automatically.
 - Settings: `FLOW_ENABLED=1`, `MAX_FLOW_CALLS=150`. `MOCK_META=1` plays a scripted sofa-shop client meeting

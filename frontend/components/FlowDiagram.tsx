@@ -35,6 +35,17 @@ export function FlowDiagram({ flow, className, box }: { flow: FlowData; classNam
           </marker>
         ))}
       </defs>
+      {(L.lanes ?? []).map((l) => (
+        // one band per part of the product, behind its boxes
+        <g key={`lane-${l.key}`}>
+          <rect x={l.x - 8} y={l.y} width={l.w - l.x + 16} height={l.h + 8} rx={14} fill="#f8f9fb" stroke="#e7eaf0" />
+          {l.label && (
+            <text x={l.x + 6} y={l.y + 19} fontSize={12} fontWeight={800} letterSpacing="0.04em" fill="#475467">
+              {l.label.toUpperCase()}
+            </text>
+          )}
+        </g>
+      ))}
       {L.edges.map((e) => (
         <path
           key={e.id}
