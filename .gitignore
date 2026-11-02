@@ -225,3 +225,7 @@ backend/debug/
 # test bench: results and the transcripts of other people's recordings (never pushed)
 backend/bench/out/
 backend/bench/private/
+
+# MinuteCanvas local replays (meeting transcripts)
+backend/replays/
+.DS_Store

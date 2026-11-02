@@ -17,7 +17,7 @@ const LS_KEY = "minutecanvas.setup";
 // for the Meet / Zoom chat, so people hear about it before recording starts
 const NOTICE =
   "Heads-up: I'm using MinuteCanvas to take live notes of this meeting. " +
-  "What we say is transcribed live by Meta's AI. MinuteCanvas does not store the audio. Tell me if you'd rather I didn't.";
+  "What we say is transcribed live by Meta's AI. MinuteCanvas does not store the audio; it saves a text replay of the notes (transcript, board and flow) that I can share, deleted after 30 days. Tell me if you'd rather I didn't.";
 
 export function Setup({
   busy,
@@ -112,7 +112,14 @@ export function Setup({
     <main className="setup">
       <div className="setup-card">
         <div className="setup-head">
-          <Logo />
+          <div className="setup-top">
+            <a href="/" aria-label="MinuteCanvas home">
+              <Logo />
+            </a>
+            <a className="setup-link" href="/meetings">
+              My meetings
+            </a>
+          </div>
           <p className="setup-tag">Turns your meeting into an illustrated board while people speak.</p>
         </div>
 
@@ -190,7 +197,7 @@ export function Setup({
             <span>
               <b>Everyone in this meeting knows it is being transcribed.</b>
               <small>
-                <ShieldCheck size={13} aria-hidden /> Audio goes to Meta for live transcription and is never stored.
+                <ShieldCheck size={13} aria-hidden /> Audio goes to Meta for live transcription and is never stored. A text replay is saved after Stop for 30 days.
               </small>
             </span>
           </label>
@@ -211,7 +218,9 @@ export function Setup({
           </button>
         </form>
       </div>
-      <p className="setup-foot">Built with Meta Muse Voice Transcribe · Muse Spark · Muse Image</p>
+      <p className="setup-foot">
+        Built with Meta Muse Voice Transcribe, Muse Spark and Muse Image. <a href="/privacy">Privacy</a>
+      </p>
     </main>
   );
 }

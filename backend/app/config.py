@@ -104,6 +104,27 @@ class Settings:
     # (0.5 s pacer lead + voice detection)
     speech_start_lag_s: float = field(default_factory=lambda: _float("SPEECH_START_LAG_S", 1.0))
 
+    # Replay: the share link plays the meeting from 00:00 (text, board, Flow Map, card images; never audio).
+    # REPLAY_BUCKET set -> Cloud Storage bucket, else the local folder REPLAY_DIR (relative = inside backend/)
+    replay_enabled: bool = field(default_factory=lambda: _env("REPLAY_ENABLED", "1") != "0")
+    replay_dir: str = field(default_factory=lambda: _env("REPLAY_DIR", "replays"))
+    replay_bucket: str = field(default_factory=lambda: _env("REPLAY_BUCKET"))
+    replay_reads_per_ip_per_min: int = field(default_factory=lambda: _int("REPLAY_READS_PER_IP_PER_MIN", 600))
+    replay_max_bytes: int = field(default_factory=lambda: _int("REPLAY_MAX_BYTES", 150_000_000))
+    # kept this many days after the meeting, then refused + deleted; PINNED_REPLAYS (comma-separated ids) are kept
+    replay_keep_days: float = field(default_factory=lambda: _float("REPLAY_KEEP_DAYS", 30))
+    pinned_replays: set[str] = field(
+        default_factory=lambda: {x.strip() for x in _env("PINNED_REPLAYS").split(",") if x.strip()})
+    replay_sweep_s: float = field(default_factory=lambda: _float("REPLAY_SWEEP_S", 6 * 3600))
+
+    # Google sign-in (only for "My meetings"; starting a meeting never needs it).
+    # GOOGLE_CLIENT_ID empty -> sign-in is off. AUTH_SECRET signs our own login token (set it on Cloud Run, or
+    # every restart signs everyone out).
+    google_client_id: str = field(default_factory=lambda: _env("GOOGLE_CLIENT_ID"))
+    auth_secret: str = field(default_factory=lambda: _env("AUTH_SECRET"))
+    auth_days: float = field(default_factory=lambda: _float("AUTH_DAYS", 14))
+    logins_per_ip_per_hour: int = field(default_factory=lambda: _int("LOGINS_PER_IP_PER_HOUR", 30))
+
     # DEBUG_DUMP=1 (local testing only): writes transcript + every Spark call to backend/debug/<session>.json
     debug_dump: bool = field(default_factory=lambda: _env("DEBUG_DUMP") == "1")
     debug_dir: str = field(default_factory=lambda: _env("DEBUG_DIR", "debug"))

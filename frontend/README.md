@@ -24,6 +24,11 @@ gcloud run deploy minutecanvas-web --source frontend --project minutecanvas-nh20
 ```
 4. Set the backend's `FRONTEND_ORIGIN` to this frontend URL (exact, no trailing slash) and redeploy the backend.
 
+## Pages
+- `/` landing page · `/meet` the app · `/replay?id=…` replay (`&view=report` opens the report) · `/privacy` · `/meetings` My meetings (Google sign-in)
+- Landing settings in `.env.production`: `NEXT_PUBLIC_DEMO_VIDEO_ID`, `NEXT_PUBLIC_DEMO_REPLAY_ID`, `NEXT_PUBLIC_CONTACT_EMAIL`.
+- Google sign-in needs no frontend setting: the page asks the backend (`GET /api/auth/config`) for the client id.
+
 ## How it works
 - Mic opens **before** the session starts; audio → AudioWorklet (`public/pcm-worklet.js`) → PCM16 mono 24 kHz, 100 ms frames with a uint64 byte-offset header.
 - Last 60 s of audio kept in the browser; after a reconnect only what the server didn't get is resent (`hello.audio_bytes_received`).

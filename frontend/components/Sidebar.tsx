@@ -1,4 +1,5 @@
 "use client";
+import { useReplay } from "@/core/replay";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, GitBranch, PanelRightClose, Pencil, Sparkles } from "lucide-react";
 import type { Card, FlowEvent } from "@/core/types";
@@ -103,6 +104,8 @@ function Transcript({
   const stick = useRef(true);
   const [editing, setEditing] = useState<number | null>(null); // line id
   const partials = Object.values(state.partials).filter((p) => p.text);
+  const replay = useReplay();
+  const focusLine = replay?.focusLine ?? null;
 
   const onScroll = () => {
     const el = box.current;
@@ -112,6 +115,11 @@ function Transcript({
     const el = box.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [state.transcript.length, state.partials]);
+  // replay: bring the line a jump landed on into view
+  useLayoutEffect(() => {
+    if (focusLine == null) return;
+    box.current?.querySelector(`[data-line="${focusLine}"]`)?.scrollIntoView({ block: "center" });
+  }, [focusLine, state.transcript.length]);
 
   const voiceNote =
     state.serverState === "recording" && (state.voice === "connecting" || state.voice === "reconnecting")
@@ -125,8 +133,14 @@ function Transcript({
           <p className="muted small tr-empty">{state.serverState === "paused" ? "Paused." : "Waiting for someone to speak…"}</p>
         )}
         {state.transcript.map((l) => (
-          <p key={l.id} className="tr-line">
-            <span className="tr-time">{fmtTime(l.t)}</span>
+          <p key={l.id} className={`tr-line ${l.id === focusLine ? "rp-focus" : ""}`} data-line={l.id}>
+            {replay ? (
+              <button className="tr-time rp-ltime" onClick={() => replay.jumpToSaid(l.t)} title="Play from this line">
+                {fmtTime(l.t)}
+              </button>
+            ) : (
+              <span className="tr-time">{fmtTime(l.t)}</span>
+            )}
             <span className="tr-text">
               <SpeakerName
                 label={l.speaker}

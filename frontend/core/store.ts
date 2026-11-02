@@ -1,5 +1,5 @@
 // Meeting state, driven by server messages.
-import type { Card, FlowData, FlowEvent, FlowMode, FlowStats, Line, PartialLine, Report, ServerMsg, ServerState, StopStep } from "./types";
+import type { Card, FlowData, FlowEvent, FlowMode, FlowStats, Line, PartialLine, ReplayInfo, Report, ServerMsg, ServerState, StopStep } from "./types";
 import type { ConnStatus } from "./client";
 
 export type Flash = { kind: "updated" | "resolved" | "done"; at: number };
@@ -64,6 +64,9 @@ export interface MeetingState {
   partials: Record<string, PartialLine>;
   speakers: Record<string, string>;
   report: Report | null;
+  replayId: string | null;
+  replayKey: string | null;
+  replayInfo: ReplayInfo | null;
   flash: Record<string, Flash>;
   toasts: { id: number; text: string; kind: "info" | "error" }[];
   imagesLeft: number | null;
@@ -88,6 +91,9 @@ export const initialState: MeetingState = {
   partials: {},
   speakers: {},
   report: null,
+  replayId: null,
+  replayKey: null,
+  replayInfo: null,
   flash: {},
   toasts: [],
   imagesLeft: null,
@@ -102,7 +108,8 @@ export type Action =
   | { type: "clearFlash"; ids: string[] }
   | { type: "dismissActivity"; id: number }
   | { type: "clearFlowFlash"; ids: string[] }
-  | { type: "reset" };
+  | { type: "reset" }
+  | { type: "replayDeleted" };
 
 let toastId = 1;
 
@@ -123,6 +130,8 @@ let activityId = 1;
 
 export function reducer(s: MeetingState, a: Action): MeetingState {
   switch (a.type) {
+    case "replayDeleted":
+      return { ...s, replayId: null, replayKey: null, replayInfo: null };
     case "reset":
       return initialState;
     case "conn":
@@ -169,6 +178,9 @@ function onServer(s: MeetingState, m: ServerMsg): MeetingState {
         partials,
         speakers: m.speakers,
         report: m.report,
+        replayId: m.replay_id ?? s.replayId,
+        replayKey: m.replay_key ?? s.replayKey,
+        replayInfo: m.replay_info ?? s.replayInfo,
         imagesLeft: m.limits?.images_left ?? null,
         helloCount: s.helloCount + 1,
         spark: s.helloCount === 0 ? { ...s.spark, cursor: m.transcript.length } : s.spark,
@@ -263,6 +275,8 @@ function onServer(s: MeetingState, m: ServerMsg): MeetingState {
       return addToast(s, m.message);
     case "report_ready":
       return { ...s, report: m.report };
+    case "replay_ready":
+      return { ...s, replayId: m.replay_id, replayKey: m.replay_key, replayInfo: m.info };
     case "error":
       return addToast(s, m.message, "error");
     case "ping":

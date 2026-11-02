@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Download, FileImage, FileText, Pause, Play, Presentation, Square } from "lucide-react";
+import { ChevronDown, Download, ExternalLink, FileImage, FileText, Link2, Pause, Play, Presentation, Square, Trash2 } from "lucide-react";
 import type { ConnStatus } from "@/core/client";
 import type { ServerState } from "@/core/types";
 import { fmtTime } from "@/core/store";
@@ -21,6 +21,7 @@ export function TopBar({
   onStop,
   onExport,
   onShowReport,
+  replay,
 }: {
   title: string | null;
   serverState: ServerState;
@@ -36,6 +37,7 @@ export function TopBar({
   onStop: () => void;
   onExport: (kind: "png" | "pdf") => void;
   onShowReport: () => void;
+  replay?: ReplayActions | null;
 }) {
   const live = serverState === "recording" || serverState === "paused";
   return (
@@ -72,6 +74,7 @@ export function TopBar({
             </button>
           </>
         )}
+        {replay && <ReplayMenu replay={replay} />}
         {hasReport && (
           <button className="btn btn-primary" onClick={onShowReport}>
             <Presentation size={15} aria-hidden /> Report
@@ -80,6 +83,70 @@ export function TopBar({
         <ExportMenu disabled={exporting} onExport={onExport} />
       </div>
     </header>
+  );
+}
+
+export interface ReplayActions {
+  href: string;
+  onCopy: () => void;
+  onDelete: (() => void) | null;     // only the browser that made the meeting (owner key)
+}
+
+function useMenu() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+  return { open, setOpen, ref };
+}
+
+function ReplayMenu({ replay }: { replay: ReplayActions }) {
+  const { open, setOpen, ref } = useMenu();
+  return (
+    <div className="menu-wrap" ref={ref}>
+      <button className="btn" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
+        <Link2 size={15} aria-hidden /> Replay <ChevronDown size={14} aria-hidden />
+      </button>
+      {open && (
+        <div className="menu" role="menu">
+          <button
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              replay.onCopy();
+            }}
+          >
+            <Link2 size={15} aria-hidden /> Copy replay link
+          </button>
+          <a role="menuitem" href={replay.href} target="_blank" rel="noopener" onClick={() => setOpen(false)}>
+            <ExternalLink size={15} aria-hidden /> Open replay
+          </a>
+          {replay.onDelete && (
+            <button
+              role="menuitem"
+              className="danger"
+              onClick={() => {
+                setOpen(false);
+                replay.onDelete?.();
+              }}
+            >
+              <Trash2 size={15} aria-hidden /> Delete replay
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

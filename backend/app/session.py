@@ -19,6 +19,7 @@ from .config import BYTES_PER_SEC, settings
 from .flow import (MAX_OPEN_GAPS, Flow, Result, _similar, check_quote, key_words, replaced_things, tokens,
                    with_usual_names)
 from .meta_api import MetaClient, ToolsUnsupported, image_mime
+from .replay import Recorder, events_key, image_key, make_store, new_owner_key, new_replay_id
 from .meta_voice import VoiceStream
 from .prompts import (FLOW_JSON_NOTE, FLOW_JSON_SCHEMA, FLOW_SYSTEM, FLOW_TOOLS, SPARK_SCHEMA, SPARK_SYSTEM,
                       GAP_STATUS_SCHEMA, GAP_STATUS_SYSTEM, SUMMARY_SCHEMA, SUMMARY_SYSTEM, VERIFY_CONFLICT_SCHEMA, VERIFY_CONFLICT_SYSTEM,
@@ -126,6 +127,12 @@ class Session:
         self.voice_status = "idle"
         self.voice_log: list[dict] = []   # voice sessions that ended: errors, resent audio, pacer stalls (debug)
         self.recording_mono = time.monotonic()
+        self.recorder: Recorder | None = Recorder() if settings.replay_enabled else None
+        self.store = None                  # replay storage, set by SessionManager
+        self.library = None                # accounts.Library, set by SessionManager
+        self.owner: dict | None = None     # signed-in user who started it ({"uid","email","name"}), or None
+        self.replay_id: str | None = None
+        self.replay_key: str | None = None # secret owner key (deletes the replay); only this browser gets it
 
     # ---------------- clock ----------------
     @property
@@ -147,6 +154,8 @@ class Session:
         self.last_seen = time.monotonic()
 
     async def send(self, msg: dict):
+        if self.recorder is not None:
+            self.recorder.add(self.meeting_t, msg)       # kept even while no browser is connected
         ws = self.socket                                  # always the newest socket
         if ws is None:
             return
@@ -171,6 +180,9 @@ class Session:
             "speakers": self.speaker_names,
             "voice": self.voice_status,
             "report": self.report,
+            "replay_id": self.replay_id,
+            "replay_key": self.replay_key,
+            "replay_info": self.replay_info() if self.replay_id else None,
             "limits": {"images_left": max(0, settings.max_images - self.images_made),
                        "spark_calls_left": max(0, settings.max_spark_calls - self.spark_calls)},
         }
@@ -240,7 +252,53 @@ class Session:
         for t in self.tasks:
             t.cancel()
         await self.send({"type": "report_ready", "report": self.report})
-        await self.send({"type": "state", "state": self.state})
+        # the browser closes its socket on "done", so the replay id must arrive before it
+        done = {"type": "state", "state": self.state}
+        await self._save_replay(last=done)
+        await self.send(done)
+
+    # ---------------- replay ----------------
+    async def _save_replay(self, last: dict):
+        """After Stop: the message log (+ `last`, the closing "done" message) and the card images -> storage; the
+        browser gets the share id."""
+        if self.recorder is None or self.store is None or not self.recorder.events:
+            return
+        self.recorder.add(self.meeting_t, last)
+        rid = new_replay_id()
+        key = new_owner_key()
+        sem = asyncio.Semaphore(8)
+
+        async def put_image(img_id: str, raw: bytes, mime: str):
+            async with sem:
+                await self.store.put(image_key(rid, img_id), raw, mime)
+
+        try:
+            await asyncio.gather(*(put_image(i, raw, mime) for i, (raw, mime) in list(self.images.items())))
+            data = self.recorder.payload(self.id, rid, self.board.title or (self.report or {}).get("title"),
+                                         self.created_wall.isoformat(), self.meeting_t,
+                                         {k: self.speaker_name(k) for k in sorted({x["speaker"] for x in self.transcript})})
+            await self.store.put(events_key(rid), data, "application/gzip")
+            self.replay_id = rid
+            if self.library is not None:
+                await self.library.saved(rid, key, self.replay_info(), self.owner)
+        except Exception as e:  # noqa: BLE001
+            log.warning("replay save failed: %s", e)
+            self.replay_id = None
+            await self.send({"type": "notice", "message": "The replay couldn't be saved."})
+            return
+        self.replay_key = key
+        self.recorder = None                  # saved; free the memory
+        log.info("replay %s saved (%d KB)", rid, len(data) // 1024)
+        # not in Recorder.KEEP: the owner key never goes into the replay itself
+        await self.send({"type": "replay_ready", "replay_id": rid, "replay_key": key, "info": self.replay_info()})
+
+    def replay_info(self) -> dict:
+        """Dashboard row: title, date, length, open gaps / conflicts at the end."""
+        gaps = sum(1 for g in self.flow.gaps.values() if not g.resolved and not g.dismissed)
+        conflicts = sum(1 for c in self.flow.contradictions.values() if not c.resolved)
+        return {"title": self.board.title or (self.report or {}).get("title") or None,
+                "date": self.created_wall.isoformat(), "duration_s": round(self.meeting_t, 1),
+                "gaps": gaps, "conflicts": conflicts}
 
     # ---------------- transcript ----------------
     async def _on_voice(self, kind: str, data: dict):
@@ -1180,14 +1238,40 @@ class SessionManager:
         self.meta = meta
         self.sessions: dict[str, Session] = {}
         self.ip_limiter = RateLimiter(settings.sessions_per_ip_per_hour, 3600)
+        self.store = make_store() if settings.replay_enabled else None     # also sets self.library
         self._cleanup: asyncio.Task | None = None
+        self._sweep: asyncio.Task | None = None
+
+    @property
+    def store(self):
+        return self._store
+
+    @store.setter
+    def store(self, value):
+        """Replay storage; the library (owners, delete, expiry) always works on the same store."""
+        from .accounts import Library         # noqa: PLC0415  (accounts imports replay, not session)
+        self._store = value
+        self.library = Library(value) if value is not None else None
 
     def start(self):
         self._cleanup = asyncio.create_task(self._cleanup_loop())
+        if self.library is not None and settings.replay_sweep_s > 0:
+            self._sweep = asyncio.create_task(self._sweep_loop())
+
+    async def _sweep_loop(self):
+        await asyncio.sleep(30)
+        while True:
+            try:
+                await self.library.sweep()
+            except Exception as e:  # noqa: BLE001
+                log.warning("replay sweep failed: %s", e)
+            await asyncio.sleep(settings.replay_sweep_s)
 
     async def shutdown(self):
         if self._cleanup:
             self._cleanup.cancel()
+        if self._sweep:
+            self._sweep.cancel()
         for s in list(self.sessions.values()):
             await s.close()
         self.sessions.clear()
@@ -1197,11 +1281,19 @@ class SessionManager:
 
     def create(self, keywords: list[str], title: str | None, ip: str) -> Session:
         s = Session(self.meta, keywords, title, ip)
+        s.store = self.store
+        s.library = self.library
         self.sessions[s.id] = s
         return s
 
     def get(self, sid: str) -> Session | None:
         return self.sessions.get(sid)
+
+    def forget_replay(self, rid: str) -> None:
+        """A deleted replay: a rejoin of its meeting must not offer the dead link (or re-add it to My meetings)."""
+        for s in self.sessions.values():
+            if s.replay_id == rid:
+                s.replay_id = s.replay_key = None
 
     async def _cleanup_loop(self):
         while True:

@@ -110,7 +110,18 @@ export interface Snapshot {
   speakers: Record<string, string>;
   voice: string;
   report: Report | null;
+  replay_id?: string | null;        // set after Stop when the replay was saved
+  replay_key?: string | null;       // secret owner key (deletes the replay); never inside the replay itself
+  replay_info?: ReplayInfo | null;
   limits: { images_left: number; spark_calls_left: number };
+}
+
+export interface ReplayInfo {
+  title: string | null;
+  date: string;
+  duration_s: number;
+  gaps: number;
+  conflicts: number;
 }
 
 export type StopStep = "transcript" | "cards" | "images" | "report";
@@ -133,6 +144,7 @@ export type ServerMsg =
   | { type: "flow_status"; state: "thinking" | "idle" | "error"; mode: FlowMode; seconds?: number; accepted?: number; rejected?: number; gaps?: number }
   | { type: "notice"; message: string }
   | { type: "report_ready"; report: Report }
+  | { type: "replay_ready"; replay_id: string; replay_key: string; info: ReplayInfo }
   | { type: "error"; code?: string; message: string };
 
 export type ClientMsg =

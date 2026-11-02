@@ -5,6 +5,14 @@ HTTP
   POST /api/sessions                       -> {session_id, token, sample_rate}
   GET  /api/sessions/{sid}/images/{img}    -> card image (proxied, CORS-safe for export)
   GET  /api/sessions/{sid}/report          (Authorization: Bearer <token>)
+  GET  /api/replays/{rid}                  -> gzipped replay log (the random replay id is the access key)
+  GET  /api/replays/{rid}/images/{img}     -> card image of a replay
+  DELETE /api/replays/{rid}                (X-Replay-Key: <owner key> or Authorization: Bearer <login token>)
+  GET  /api/auth/config                    -> {"google_client_id"} ("" = sign-in off)
+  POST /api/auth/google                    {"credential": Google ID token} -> {token, user}
+  GET  /api/me/meetings                    (Bearer login token) -> {user, meetings}
+  POST /api/me/meetings/claim              {"items":[{"rid","key"}]}: this browser's meetings -> the account
+  DELETE /api/me                           deletes every replay of the account + the account's list
 WebSocket
   /ws/{sid}   first message {"type":"auth","token":...}; audio = binary frames
               [8-byte little-endian byte offset][PCM16 mono 24 kHz]
@@ -23,9 +31,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from .accounts import AuthError, GoogleVerifier, Tokens, uid_for
 from .config import SAMPLE_RATE, settings
-from .meta_api import MetaClient
-from .security import TokenBucket, client_ip, clean_text, origin_allowed
+from .meta_api import MetaClient, image_mime
+from .replay import events_key, image_key, valid_img, valid_rid
+from .security import RateLimiter, TokenBucket, client_ip, clean_text, origin_allowed
 from .session import SessionManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -39,6 +49,10 @@ async def lifespan(app: FastAPI):
     app.state.meta = MetaClient()
     app.state.sessions = SessionManager(app.state.meta)
     app.state.sessions.start()
+    app.state.replay_limiter = RateLimiter(settings.replay_reads_per_ip_per_min, 60)
+    app.state.login_limiter = RateLimiter(settings.logins_per_ip_per_hour, 3600)
+    app.state.google = GoogleVerifier(settings.google_client_id)
+    app.state.tokens = Tokens(settings.auth_secret)
     yield
     await app.state.sessions.shutdown()
     await app.state.meta.aclose()
@@ -48,8 +62,8 @@ app = FastAPI(title="MinuteCanvas API", lifespan=lifespan, docs_url=None, redoc_
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.frontend_origins,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type", "X-Replay-Key"],
     max_age=600,
 )
 
@@ -82,13 +96,15 @@ async def create_session(body: CreateSession, request: Request):
     if settings.access_code and not secrets.compare_digest(body.access_code or "", settings.access_code):
         raise HTTPException(401, "wrong access code")
     mgr: SessionManager = request.app.state.sessions
-    ip = client_ip(request.headers, request.client.host if request.client else None, settings.trusted_proxy_hops)
+    ip = _ip(request)
     if mgr.active_count() >= settings.max_active_sessions:
         raise HTTPException(503, "too many live sessions right now, try again later")
     if not mgr.ip_limiter.allow(ip):
         raise HTTPException(429, "too many sessions, try again later")
     keywords = [k for k in (clean_text(x, 40) for x in body.keywords[:30]) if k]
     s = mgr.create(keywords, clean_text(body.title, 80) or None, ip)
+    # signed in (optional): the replay goes straight into the account's "My meetings"
+    s.owner = _user(request, required=False)
     log.info("session %s created (x-forwarded-for=%r -> ip used for rate limit=%s)",
              s.id, request.headers.get("x-forwarded-for"), ip)
     return {"session_id": s.id, "token": s.token, "sample_rate": SAMPLE_RATE}
@@ -126,6 +142,144 @@ async def get_report(sid: str, request: Request):
     if not s.report:
         raise HTTPException(409, "report not ready")
     return s.report
+
+
+def _ip(request: Request) -> str:
+    return client_ip(request.headers, request.client.host if request.client else None, settings.trusted_proxy_hops)
+
+
+def _library(request: Request):
+    lib = request.app.state.sessions.library
+    if lib is None:
+        raise HTTPException(404)
+    return lib
+
+
+async def _replay_store(request: Request, rid: str):
+    lib = _library(request)
+    if not valid_rid(rid):
+        raise HTTPException(404)
+    if not request.app.state.replay_limiter.allow(_ip(request)):
+        raise HTTPException(429, "too many requests, try again later")
+    if not await lib.readable(rid):          # deleted, older than REPLAY_KEEP_DAYS, or never existed
+        raise HTTPException(404)
+    return lib.store
+
+
+@app.get("/api/replays/{rid}")
+async def get_replay(rid: str, request: Request):
+    data = await (await _replay_store(request, rid)).get(events_key(rid))
+    if data is None:
+        raise HTTPException(404)
+    # stored gzipped: the browser un-gzips it on the fly. no-store: a deleted replay must not live on in a cache
+    return Response(data, media_type="application/json",
+                    headers={"Content-Encoding": "gzip", "Cache-Control": "no-store"})
+
+
+@app.get("/api/replays/{rid}/images/{img_id}")
+async def get_replay_image(rid: str, img_id: str, request: Request):
+    if not valid_img(img_id):
+        raise HTTPException(404)
+    raw = await (await _replay_store(request, rid)).get(image_key(rid, img_id))
+    if raw is None:
+        raise HTTPException(404)
+    return Response(raw, media_type=image_mime(raw) or "image/webp", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.delete("/api/replays/{rid}")
+async def delete_replay(rid: str, request: Request):
+    lib = _library(request)
+    origin = request.headers.get("origin")
+    if origin and not origin_allowed(origin, settings.frontend_origins):
+        raise HTTPException(403, "origin not allowed")
+    if not valid_rid(rid) or not request.app.state.replay_limiter.allow(_ip(request)):
+        raise HTTPException(404)
+    m = await lib.can_delete(rid, request.headers.get("x-replay-key"), _user(request, required=False))
+    if m is None:
+        raise HTTPException(404)            # same answer for "no such replay" and "not yours"
+    try:
+        await lib.delete(rid, m)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(502, "couldn't delete the replay, please try again") from None
+    request.app.state.sessions.forget_replay(rid)
+    return {"deleted": rid}
+
+
+# ---------------- Google sign-in + My meetings ----------------
+def _user(request: Request, required: bool = True) -> dict | None:
+    u = request.app.state.tokens.from_header(request.headers.get("authorization"))
+    if u is None and required:
+        raise HTTPException(401, "please sign in")
+    return u
+
+
+@app.get("/api/auth/config")
+async def auth_config():
+    return {"google_client_id": settings.google_client_id if _accounts_on() else ""}
+
+
+def _accounts_on() -> bool:
+    return bool(settings.google_client_id) and settings.replay_enabled
+
+
+class GoogleLogin(BaseModel):
+    credential: str = Field(min_length=20, max_length=4096)
+
+
+@app.post("/api/auth/google")
+async def auth_google(body: GoogleLogin, request: Request):
+    origin = request.headers.get("origin")
+    if origin and not origin_allowed(origin, settings.frontend_origins):
+        raise HTTPException(403, "origin not allowed")
+    if not _accounts_on():
+        raise HTTPException(404, "sign-in is off on this server")
+    if not request.app.state.login_limiter.allow(_ip(request)):
+        raise HTTPException(429, "too many sign-ins, try again later")
+    try:
+        g = await request.app.state.google.verify(body.credential)
+    except AuthError as e:
+        raise HTTPException(401, str(e)) from None
+    user = {"uid": uid_for(g["sub"]), "email": g["email"], "name": g["name"]}
+    token = request.app.state.tokens.make(user["uid"], user["email"], user["name"])
+    return {"token": token, "user": {"email": user["email"], "name": user["name"]}}
+
+
+@app.get("/api/me/meetings")
+async def my_meetings(request: Request):
+    u = _user(request)
+    return {"user": {"email": u["email"], "name": u["name"]}, "meetings": await _library(request).meetings(u)}
+
+
+class ClaimItem(BaseModel):
+    rid: str = Field(max_length=64)
+    key: str = Field(max_length=100)
+
+
+class Claim(BaseModel):
+    items: list[ClaimItem] = Field(default_factory=list, max_length=200)
+
+
+@app.post("/api/me/meetings/claim")
+async def claim_meetings(body: Claim, request: Request):
+    u = _user(request)
+    lib = _library(request)
+    added = await lib.claim(u, [(i.rid, i.key) for i in body.items])
+    return {"added": added, "meetings": await lib.meetings(u)}
+
+
+@app.delete("/api/me")
+async def delete_me(request: Request):
+    origin = request.headers.get("origin")
+    if origin and not origin_allowed(origin, settings.frontend_origins):
+        raise HTTPException(403, "origin not allowed")
+    u = _user(request)
+    try:
+        gone = await _library(request).delete_user(u)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(502, "couldn't delete everything, please try again") from None
+    for rid in gone:
+        request.app.state.sessions.forget_replay(rid)
+    return {"deleted_meetings": len(gone)}
 
 
 @app.websocket("/ws/{sid}")

@@ -20,12 +20,15 @@ export interface StoredSession {
 
 export class ApiError extends Error {}
 
-export async function createSession(opts: { title?: string; keywords: string[]; access_code?: string }): Promise<StoredSession> {
+export async function createSession(
+  opts: { title?: string; keywords: string[]; access_code?: string },
+  extraHeaders: Record<string, string> = {},   // signed in: Authorization (the replay goes into "My meetings")
+): Promise<StoredSession> {
   let res: Response;
   try {
     res = await fetch(`${BACKEND_URL}/api/sessions`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...extraHeaders },
       body: JSON.stringify({
         title: opts.title || null,
         keywords: opts.keywords,

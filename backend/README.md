@@ -57,7 +57,7 @@ gcloud run deploy minutecanvas-api --source backend --project minutecanvas-nh202
 - After the first deploy, check the log line `session … created (x-forwarded-for=… -> ip used …)`: the IP used must be your real public IP. If it shows a Google IP instead, redeploy with `TRUSTED_PROXY_HOPS=2`.
 
 ## Security
-API key only on the backend (Secret Manager) · session token as the first WS message · Origin check on WS + CORS for the frontend only · rate limits (sessions per IP, live sessions, Spark/image caps, WS messages per second, max frame size, audio can't arrive faster than real time) · card text sanitised (frontend must still use `textContent`) · audio never stored · images and report need `Authorization: Bearer <token>`.
+API key only on the backend (Secret Manager) · session token as the first WS message · Origin check on WS + CORS for the frontend only · rate limits (sessions per IP, live sessions, Spark/image caps, WS messages per second, max frame size, audio can't arrive faster than real time) · card text sanitised (frontend must still use `textContent`) · audio never stored (replays keep text, board, Flow Map and card images only; random 128-bit id, reads rate-limited per IP) · images and report need `Authorization: Bearer <token>`.
 
 ## Protocol (for the frontend)
 
@@ -69,10 +69,24 @@ API key only on the backend (Secret Manager) · session token as the first WS me
 
 Client → server: `start` · `pause` · `resume` · `stop` · `rename_speaker {label,name}` · `card_edit {id,fields}` · `card_delete {id}` · `gap_review` (Flow Map "Check gaps")
 
-Server → client: `hello` · `ping` · `state` · `voice_status` · `transcript_partial` · `transcript_partial_clear` · `transcript_final` · `cards_added` · `cards_updated` · `card_deleted` · `board_title` · `speakers` · `spark_status` · `flow {flow,events,stats}` · `flow_status` · `notice` · `report_ready` · `error`
+Server → client: `hello` · `ping` · `state` · `voice_status` · `transcript_partial` · `transcript_partial_clear` · `transcript_final` · `cards_added` · `cards_updated` · `card_deleted` · `board_title` · `speakers` · `spark_status` · `flow {flow,events,stats}` · `flow_status` · `notice` · `report_ready` · `replay_ready {replay_id, replay_key, info}` (after Stop, before the final `state: done`; `replay_key` = secret owner key, never inside the replay) · `error`
 
 Card: `{id, column: goals|decisions|actions|updates|questions, title, detail, owner, due, status: done|in_progress|blocked, done, resolved, answer, t, updated_t, image_url, image_status, source, user_locked}`
 Image URLs are relative (`/api/sessions/…/images/…`): fetch them with `Authorization: Bearer <token>`, then `URL.createObjectURL(blob)` (blob URLs also make PNG/PDF export work). Render all text with `textContent` only.
+
+## Replay (share link)
+Every message sent to the browser (except `hello`, `ping`, `voice_status`, `notice`, `error`) is logged with the meeting time it was sent at. After Stop the log and the card images are saved (`REPLAY_BUCKET` = Cloud Storage bucket, else the local folder `REPLAY_DIR`, default `backend/replays`) under a random 128-bit replay id, which is the access key of the link `/replay?id=<id>`. Audio is never saved.
+- `GET /api/replays/{id}` → `{v, title, date, duration_s, speakers, events: [[t, msg], ...]}` (gzipped)
+- `GET /api/replays/{id}/images/{img}` → card image
+The replay page feeds the messages through the same reducer as the live app, so the transcript, board and Flow Map appear in the same order and at the same meeting time.
+- `DELETE /api/replays/{id}` with `X-Replay-Key: <owner key>` (the browser that made the meeting) or `Authorization: Bearer <login token>` (the signed-in owner) → removes everything of that replay.
+- Kept `REPLAY_KEEP_DAYS` (30) days: older replays are refused on read and removed by a sweep every 6 h; ids in `PINNED_REPLAYS` (the public demo) are kept. `replays/<id>/meta.json` holds the creation time, the sha256 of the owner key, the owner account and the dashboard row.
+
+## My meetings (Google sign-in, optional)
+Starting a meeting never needs an account. `GOOGLE_CLIENT_ID` + `AUTH_SECRET` turn on sign-in for the My meetings page:
+- `GET /api/auth/config` → `{google_client_id}` · `POST /api/auth/google {credential}` (Google ID token, checked against Google's keys, our client id, issuer, expiry, verified email) → `{token, user}` (our HMAC token, `AUTH_DAYS` 14)
+- `GET /api/me/meetings` · `POST /api/me/meetings/claim {items:[{rid,key}]}` (meetings made in this browser before sign-in) · `DELETE /api/me` (every replay of the account + the account list)
+- Stored: `users/<sha256(sub)[:32]>.json` = email, name, replay ids. No database: same bucket as the replays.
 
 
 ## Live Flow Map (Spark Flow agent)

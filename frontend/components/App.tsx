@@ -1,11 +1,13 @@
 "use client";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CircleHelp, LoaderCircle, Mic, MonitorSpeaker, PanelRightOpen, Presentation, TriangleAlert, X } from "lucide-react";
+import { CircleHelp, Link2, LoaderCircle, Mic, MonitorSpeaker, PanelRightOpen, Presentation, TriangleAlert, X } from "lucide-react";
 import type { AudioSource, Card, ClientMsg, FlowEvent } from "@/core/types";
 import { AudioCapture, CaptureError, tabAudioSupported } from "@/core/audio";
 import { ApiError, MeetingClient, StoredSession, checkStored, clearStored, createSession, loadStored } from "@/core/client";
 import { initialState, orderedCards, reducer } from "@/core/store";
+import { replayUrl } from "@/core/replay";
+import { addLocalMeeting, authHeader, deleteReplay, AccountError } from "@/core/account";
 import { preloadImages, setImageFetcher } from "@/core/images";
 import { exportPng, exportSinglePdf, nextFrames, safeName } from "@/core/export";
 import { Setup, SetupValues } from "./Setup";
@@ -104,7 +106,7 @@ export default function App() {
     }
     let s: StoredSession;
     try {
-      s = await createSession({ title: v.title, keywords: v.keywords, access_code: v.accessCode });
+      s = await createSession({ title: v.title, keywords: v.keywords, access_code: v.accessCode }, authHeader());
     } catch (e) {
       audio.close();
       setSetupError(e instanceof ApiError ? e.message : "Couldn't create the meeting.");
@@ -211,6 +213,36 @@ export default function App() {
     [focusFlow],
   );
 
+  // this browser keeps the meeting (with its owner key) for "My meetings" and for deleting the replay
+  useEffect(() => {
+    if (state.replayId && state.replayKey && state.replayInfo) addLocalMeeting({ rid: state.replayId, key: state.replayKey, ...state.replayInfo });
+  }, [state.replayId, state.replayKey, state.replayInfo]);
+
+  async function onDeleteReplay() {
+    const rid = state.replayId;
+    if (!rid) return;
+    if (!window.confirm("Delete the replay of this meeting? The share link stops working for everyone. This can't be undone.")) return;
+    try {
+      await deleteReplay(rid);
+      dispatch({ type: "replayDeleted" });
+      dispatch({ type: "toast", text: "Replay deleted. The link no longer works." });
+    } catch (e) {
+      dispatch({ type: "toast", text: e instanceof AccountError ? e.message : "Couldn't delete the replay.", kind: "error" });
+      if (e instanceof AccountError && e.status === 404) dispatch({ type: "replayDeleted" });
+    }
+  }
+
+  async function copyReplay() {
+    if (!state.replayId) return;
+    const url = replayUrl(state.replayId);
+    try {
+      await navigator.clipboard.writeText(url);
+      dispatch({ type: "toast", text: "Replay link copied. Anyone with the link can watch the meeting again." });
+    } catch {
+      window.prompt("Copy the replay link:", url);
+    }
+  }
+
   function onStop() {
     if (!window.confirm("Stop the meeting? Recording ends and the report is built.")) return;
     clientRef.current?.stop();
@@ -286,6 +318,11 @@ export default function App() {
         onStop={onStop}
         onExport={onExport}
         onShowReport={() => setView("report")}
+        replay={
+          state.replayId
+            ? { href: replayUrl(state.replayId), onCopy: copyReplay, onDelete: state.replayKey ? onDeleteReplay : null }
+            : null
+        }
       />
       <main className="main">
         {state.serverState === "paused" && <div className="paused-bar">Paused — nothing is being transcribed. Press Resume to continue.</div>}
@@ -295,6 +332,7 @@ export default function App() {
             gaps={state.flow ? state.flow.gaps.filter((g) => !g.resolved && !g.dismissed).length : 0}
             conflicts={state.flow ? state.flow.contradictions.filter((c) => !c.resolved).length : 0}
             onOpen={() => setView("report")}
+            onCopyReplay={state.replayId ? copyReplay : null}
             onClose={() => setReportReady(false)}
           />
         )}
@@ -430,7 +468,19 @@ function FinishingBar({ step }: { step: string | null }) {
   );
 }
 
-function ReportBanner({ gaps, conflicts, onOpen, onClose }: { gaps: number; conflicts: number; onOpen: () => void; onClose: () => void }) {
+function ReportBanner({
+  gaps,
+  conflicts,
+  onOpen,
+  onCopyReplay,
+  onClose,
+}: {
+  gaps: number;
+  conflicts: number;
+  onOpen: () => void;
+  onCopyReplay: (() => void) | null;
+  onClose: () => void;
+}) {
   const found: string[] = [];
   if (gaps) found.push(`${gaps} gap${gaps > 1 ? "s" : ""} nobody covered`);
   if (conflicts) found.push(`${conflicts} conflict${conflicts > 1 ? "s" : ""}`);
@@ -448,6 +498,11 @@ function ReportBanner({ gaps, conflicts, onOpen, onClose }: { gaps: number; conf
           <span className="rb-found muted">Muse Spark’s final check found no open gaps.</span>
         )}
       </span>
+      {onCopyReplay && (
+        <button className="btn" onClick={onCopyReplay} title="Anyone with this link can watch the meeting again">
+          <Link2 size={15} aria-hidden /> Copy replay link
+        </button>
+      )}
       <button className="btn btn-primary" onClick={onOpen}>
         <Presentation size={15} aria-hidden /> Open report
       </button>

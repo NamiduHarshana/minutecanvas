@@ -38,6 +38,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
+import { useReplay } from "@/core/replay";
 import type { Evidence, FlowContradiction, FlowData, FlowGap, FlowStats, FlowStep, StepKind } from "@/core/types";
 import type { FlowStatus } from "@/core/store";
 import { fmtTime, speakerName } from "@/core/store";
@@ -584,11 +585,19 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
 
 // ---------------- evidence drawer ----------------
 function QuoteRow({ ev, speakers, tone }: { ev: Evidence; speakers: Record<string, string>; tone?: string }) {
+  const replay = useReplay();
   return (
     <blockquote className={`fm-quote ${tone ?? ""}`}>
       <p>“{ev.quote}”</p>
       <footer>
-        {speakerName(speakers, ev.speaker)} · {fmtTime(ev.t)}
+        {speakerName(speakers, ev.speaker)} ·{" "}
+        {replay ? (
+          <button className="rp-jump" onClick={() => replay.jumpToSaid(ev.t)} title="Play the meeting from this moment">
+            <Play size={10} fill="currentColor" aria-hidden /> {fmtTime(ev.t)}
+          </button>
+        ) : (
+          fmtTime(ev.t)
+        )}
       </footer>
     </blockquote>
   );
