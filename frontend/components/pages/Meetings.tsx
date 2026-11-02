@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Ellipsis, Link2, Mic, Search, Trash2 } from "lucide-react";
+import { Ellipsis, Link2, LoaderCircle, Mic, Search, Trash2 } from "lucide-react";
 import { AccountError, deleteReplay, type MeetingRow } from "@/core/account";
 import { conflictsFound, findingCount, fmtClock, fmtDay, gapsFound, replayHref, stamp, useLibrary } from "@/core/library";
 import { SITE } from "@/core/site";
 import { CountTag, Empty, Seg } from "../kit";
+import { SignInGate } from "../SignIn";
 import { Toasts, useToasts } from "../Toasts";
 
 type Filter = "all" | "gaps" | "conflicts";
@@ -69,115 +70,117 @@ export function Meetings() {
         </a>
       </div>
 
-      {!lib.loading && !lib.user && (
-        <div className="note" role="note">
-          <span>These are the meetings made in this browser. Sign in with Google to keep them in one list on every device.</span>
-          <a className="mc-btn mc-btn-outline mc-btn-sm" href="/account">
-            Sign in
-          </a>
-        </div>
-      )}
-      {lib.error && (
-        <p className="form-error" role="alert">
-          {lib.error}
+      {lib.loading ? (
+        <p className="loading" role="status">
+          <LoaderCircle size={18} className="spin" aria-hidden /> Loading…
         </p>
+      ) : !lib.user ? (
+        <SignInGate onError={(m) => toasts.show(m, "error")} />
+      ) : (
+        <>
+          {lib.error && (
+            <p className="form-error" role="alert">
+              {lib.error}
+            </p>
+          )}
+
+          <div className="toolbar">
+            <label className="search">
+              <Search size={16} strokeWidth={1.75} aria-hidden />
+              <input placeholder="Search titles" aria-label="Search titles" value={q} onChange={(e) => setQ(e.target.value)} />
+            </label>
+            <Seg
+              label="Show"
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { id: "all", label: "All" },
+                { id: "gaps", label: "With gaps" },
+                { id: "conflicts", label: "With conflicts" },
+              ]}
+            />
+            <span className="grow" />
+            <Seg
+              label="Sort"
+              value={sort}
+              onChange={setSort}
+              options={[
+                { id: "new", label: "Newest" },
+                { id: "long", label: "Longest" },
+                { id: "found", label: "Most findings" },
+              ]}
+            />
+          </div>
+
+          <section className="mc-card scroll table-card">
+            {!lib.loading && rows.length === 0 ? (
+              lib.rows.length === 0 ? (
+                <Empty title="No meetings yet">
+                  <p>When you stop a meeting it shows up here, with its replay and report.</p>
+                  <a className="mc-btn mc-btn-primary mc-btn-sm" href="/meet">
+                    New meeting
+                  </a>
+                </Empty>
+              ) : (
+                <Empty title="No meetings match">
+                  <p>Try another word or filter.</p>
+                </Empty>
+              )
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Meeting</th>
+                    <th>Date</th>
+                    <th>Length</th>
+                    <th>Findings</th>
+                    <th>Expires</th>
+                    <th>
+                      <span className="sr">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.rid}>
+                      <td>
+                        <a className="t-link" href={replayHref(r.rid)}>
+                          {r.title || "Untitled meeting"}
+                        </a>
+                      </td>
+                      <td className="c2">{fmtDay(r.date)}</td>
+                      <td>
+                        <span className="mc-time c2">{fmtClock(r.duration_s || 0)}</span>
+                      </td>
+                      <td>
+                        <div className="mc-row nowrap">
+                          <CountTag kind="gap" n={r.gaps || 0} />
+                          <CountTag kind="conflict" n={r.conflicts || 0} />
+                        </div>
+                      </td>
+                      <td className="cm">{expiresIn(r)}</td>
+                      <td>
+                        <div className="mc-row nowrap end">
+                          <a className="mc-btn mc-btn-primary mc-btn-sm" href={replayHref(r.rid)}>
+                            Replay
+                          </a>
+                          <a className="mc-btn mc-btn-outline mc-btn-sm" href={replayHref(r.rid, { report: true })}>
+                            Report
+                          </a>
+                          <RowMenu onCopy={() => onCopy(r)} onDelete={() => onDelete(r)} title={r.title || "Untitled meeting"} />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+          <p className="hint" style={{ margin: 0 }}>
+            Meetings you record before signing in stay hidden in this browser. When you sign in, you choose whether to add them to your account.
+          </p>
+        </>
       )}
-
-      <div className="toolbar">
-        <label className="search">
-          <Search size={16} strokeWidth={1.75} aria-hidden />
-          <input placeholder="Search titles" aria-label="Search titles" value={q} onChange={(e) => setQ(e.target.value)} />
-        </label>
-        <Seg
-          label="Show"
-          value={filter}
-          onChange={setFilter}
-          options={[
-            { id: "all", label: "All" },
-            { id: "gaps", label: "With gaps" },
-            { id: "conflicts", label: "With conflicts" },
-          ]}
-        />
-        <span className="grow" />
-        <Seg
-          label="Sort"
-          value={sort}
-          onChange={setSort}
-          options={[
-            { id: "new", label: "Newest" },
-            { id: "long", label: "Longest" },
-            { id: "found", label: "Most findings" },
-          ]}
-        />
-      </div>
-
-      <section className="mc-card scroll table-card">
-        {!lib.loading && rows.length === 0 ? (
-          lib.rows.length === 0 ? (
-            <Empty title="No meetings yet">
-              <p>When you stop a meeting it shows up here, with its replay and report.</p>
-              <a className="mc-btn mc-btn-primary mc-btn-sm" href="/meet">
-                New meeting
-              </a>
-            </Empty>
-          ) : (
-            <Empty title="No meetings match">
-              <p>Try another word or filter.</p>
-            </Empty>
-          )
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Meeting</th>
-                <th>Date</th>
-                <th>Length</th>
-                <th>Findings</th>
-                <th>Expires</th>
-                <th>
-                  <span className="sr">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.rid}>
-                  <td>
-                    <a className="t-link" href={replayHref(r.rid)}>
-                      {r.title || "Untitled meeting"}
-                    </a>
-                  </td>
-                  <td className="c2">{fmtDay(r.date)}</td>
-                  <td>
-                    <span className="mc-time c2">{fmtClock(r.duration_s || 0)}</span>
-                  </td>
-                  <td>
-                    <div className="mc-row nowrap">
-                      <CountTag kind="gap" n={r.gaps || 0} />
-                      <CountTag kind="conflict" n={r.conflicts || 0} />
-                    </div>
-                  </td>
-                  <td className="cm">{expiresIn(r)}</td>
-                  <td>
-                    <div className="mc-row nowrap end">
-                      <a className="mc-btn mc-btn-primary mc-btn-sm" href={replayHref(r.rid)}>
-                        Replay
-                      </a>
-                      <a className="mc-btn mc-btn-outline mc-btn-sm" href={replayHref(r.rid, { report: true })}>
-                        Report
-                      </a>
-                      <RowMenu onCopy={() => onCopy(r)} onDelete={() => onDelete(r)} title={r.title || "Untitled meeting"} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-      <p className="hint" style={{ margin: 0 }}>
-        Meetings you record before signing in are kept in this browser and added to your account when you sign in.
-      </p>
       <Toasts {...toasts} />
     </div>
   );

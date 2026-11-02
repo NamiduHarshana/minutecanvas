@@ -1,13 +1,14 @@
 "use client";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link2, LoaderCircle, Mic, MonitorSpeaker, Presentation, X } from "lucide-react";
+import { Link2, LoaderCircle, LogIn, Mic, MonitorSpeaker, Presentation, X } from "lucide-react";
 import type { AudioSource, Card, ClientMsg, FlowEvent } from "@/core/types";
 import { AudioCapture, CaptureError, tabAudioSupported } from "@/core/audio";
 import { ApiError, MeetingClient, StoredSession, checkStored, clearStored, createSession, loadStored } from "@/core/client";
 import { initialState, orderedCards, reducer } from "@/core/store";
 import { replayUrl } from "@/core/replay";
 import { addLocalMeeting, authHeader, deleteReplay, AccountError } from "@/core/account";
+import { useUser } from "@/core/library";
 import { preloadImages, setImageFetcher } from "@/core/images";
 import { exportPng, exportSinglePdf, nextFrames, safeName } from "@/core/export";
 import { Setup, SetupValues } from "./Setup";
@@ -50,6 +51,7 @@ export default function App() {
   const sheetRef = useRef<HTMLDivElement>(null);
   const shownReport = useRef(false);
   const [reportReady, setReportReady] = useState(false);   // banner on the board instead of jumping away
+  const user = useUser();                                   // signed out: "Sign in to keep this meeting" after Stop
 
   const cards = useMemo(() => orderedCards(state), [state]);
   const questions = useMemo(() => cards.filter((c) => c.column === "questions"), [cards]);
@@ -214,7 +216,8 @@ export default function App() {
     [focusFlow],
   );
 
-  // this browser keeps the meeting (with its owner key) for "My meetings" and for deleting the replay
+  // this browser keeps the meeting (with its owner key) for deleting the replay; made signed out, it stays hidden
+  // here until someone signs in and chooses Add (ClaimPrompt)
   useEffect(() => {
     if (state.replayId && state.replayKey && state.replayInfo) addLocalMeeting({ rid: state.replayId, key: state.replayKey, ...state.replayInfo });
   }, [state.replayId, state.replayKey, state.replayInfo]);
@@ -346,6 +349,7 @@ export default function App() {
               conflicts={state.flow ? state.flow.contradictions.filter((c) => !c.resolved).length : 0}
               onOpen={() => setView("report")}
               onCopyReplay={state.replayId ? copyReplay : null}
+              keep={user === null && !!state.replayId && !!state.replayKey}
               onClose={() => setReportReady(false)}
             />
           )}
@@ -490,12 +494,14 @@ function ReportBanner({
   conflicts,
   onOpen,
   onCopyReplay,
+  keep,
   onClose,
 }: {
   gaps: number;
   conflicts: number;
   onOpen: () => void;
   onCopyReplay: (() => void) | null;
+  keep: boolean;
   onClose: () => void;
 }) {
   return (
@@ -516,6 +522,11 @@ function ReportBanner({
         <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={onCopyReplay} title="Anyone with this link can watch the meeting again">
           <Link2 strokeWidth={1.75} aria-hidden /> Copy replay link
         </button>
+      )}
+      {keep && (
+        <a className="mc-btn mc-btn-outline mc-btn-sm" href="/account" title="Sign in, then choose Add to keep it in your meetings">
+          <LogIn strokeWidth={1.75} aria-hidden /> Sign in to keep this meeting
+        </a>
       )}
       <button className="mc-btn mc-btn-primary mc-btn-sm" onClick={onOpen}>
         <Presentation strokeWidth={1.75} aria-hidden /> Open report

@@ -1,6 +1,7 @@
 // "My meetings": this browser's meeting list (with each replay's secret owner key), Google sign-in, delete.
-// Starting a meeting never needs sign-in. Meetings made before signing in are kept here and added to the
-// account on sign-in (the owner key proves they are yours).
+// Starting a meeting never needs sign-in, but the records pages do (someone else using this browser must not see
+// them). Meetings made signed out stay hidden in this browser; after signing in the user is asked whether to add
+// them to the account (the owner key proves they were made here) or to remove them from this browser ("Not mine").
 "use client";
 import { BACKEND_URL } from "./client";
 
@@ -168,7 +169,7 @@ export async function googleClientId(): Promise<string> {
   return typeof j.google_client_id === "string" ? j.google_client_id : "";
 }
 
-/** Google ID token -> our login token; then this browser's meetings are added to the account. */
+/** Google ID token -> our login token. This browser's meetings are only added after the user says so (pendingLocal). */
 export async function signInWithGoogle(credential: string): Promise<User> {
   const j = await (await call("/api/auth/google", { method: "POST", body: JSON.stringify({ credential }) }, false)).json();
   saveAuth({ token: j.token, user: j.user });
@@ -190,12 +191,34 @@ export async function myMeetings(): Promise<{ user: User; meetings: MeetingRow[]
   return (await call("/api/me/meetings")).json();
 }
 
-/** Adds this browser's meetings to the account. Returns the account's list. */
-export async function claimLocal(): Promise<MeetingRow[]> {
+/** Signed in: this browser's meetings that aren't in the account yet (made while nobody was signed in, or by
+ *  someone else). Ones already in the account (recorded while signed in) are dropped from this browser silently. */
+export async function pendingLocal(): Promise<LocalMeeting[]> {
+  const local = localMeetings();
+  if (!local.length || !currentAuth()) return [];
+  const mine = new Set((await myMeetings()).meetings.map((m) => m.rid));
+  const pending = local.filter((m) => !mine.has(m.rid));
+  if (pending.length !== local.length) saveLocal(pending);
+  return pending;
+}
+
+/** "Add": this browser's meetings -> the account (the server checks each owner key and skips other people's),
+ *  then the browser forgets them. Returns how many were added. */
+export async function claimLocal(): Promise<number> {
   const items = localMeetings().map((m) => ({ rid: m.rid, key: m.key }));
-  if (!items.length) return (await myMeetings()).meetings;
-  const j = await (await call("/api/me/meetings/claim", { method: "POST", body: JSON.stringify({ items }) })).json();
-  return j.meetings as MeetingRow[];
+  let added = 0;
+  if (items.length) {
+    const j = await (await call("/api/me/meetings/claim", { method: "POST", body: JSON.stringify({ items }) })).json();
+    added = Number(j.added) || 0;
+  }
+  forgetLocal();
+  return added;
+}
+
+/** "Not mine": remove this browser's meetings from this browser; nothing goes into the account. */
+export function forgetLocal() {
+  saveLocal([]);
+  window.dispatchEvent(new Event(AUTH_EVENT));
 }
 
 /** Owner key (this browser made it) or the signed-in owner. */

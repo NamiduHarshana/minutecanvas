@@ -158,8 +158,11 @@ export function Setup({
     });
   }
 
+  // Two columns on a laptop (left: what the meeting is; right: how it is heard) and one bottom row with the consent
+  // and Start, so everything fits a 13" screen without scrolling; on shorter screens the bottom row sticks to the
+  // bottom of the window. Phone width: one column.
   return (
-    <div className="wrap narrow-760">
+    <div className="wrap narrow-1040">
       <div>
         <h1 className="h-page">New meeting</h1>
         <p className="sub">Three steps, then MinuteCanvas listens and draws.</p>
@@ -175,141 +178,138 @@ export function Setup({
       )}
 
       <form onSubmit={submit} className="mc-card setup-card">
-        <div className="field">
-          <label htmlFor="mt">
-            Meeting title <span className="opt">(optional)</span>
-          </label>
-          <input id="mt" className="input" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} placeholder="Muse Spark names it if you leave this empty" />
-        </div>
-        <div className="field">
-          <label htmlFor="mw">Names and project words</label>
-          <input id="mw" className="input" value={keywords} onChange={(e) => setKeywords(e.target.value)} maxLength={600} placeholder="Kasun, Amali, Stripe, MinuteCanvas" />
-          <span className="hint">Comma-separated. Helps Muse Voice spell them right.</span>
-        </div>
-
-        <div className="field" role="group" aria-labelledby="audio-l">
-          <span className="flabel" id="audio-l">
-            Audio
-          </span>
-          <div className="choices">
-            <button type="button" className={`choice ${source === "mic" ? "on" : ""}`} onClick={() => setSource("mic")} aria-pressed={source === "mic"}>
-              <Mic size={22} strokeWidth={1.75} aria-hidden />
-              <span>
-                <b>Mic</b>
-                <span>Everyone is in the room</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              className={`choice ${source === "mic_tab" ? "on" : ""}`}
-              onClick={() => tabOk && setSource("mic_tab")}
-              aria-pressed={source === "mic_tab"}
-              disabled={!tabOk}
-            >
-              <MonitorSpeaker size={22} strokeWidth={1.75} aria-hidden />
-              <span>
-                <b>Mic + meeting tab</b>
-                <span>{tabOk ? "Google Meet or Zoom in Chrome" : "Needs Chrome on a computer"}</span>
-              </span>
-            </button>
-          </div>
-          <span className="hint">
-            {source === "mic_tab"
-              ? "Next, Chrome asks which tab to share. Pick the meeting tab and turn on “Also share tab audio”. Use headphones so your mic doesn’t pick up the speakers."
-              : "Put the laptop where it can hear everyone."}
-          </span>
-        </div>
-
-        {(mic === "prompt" || mic === "unknown") && (
-          <div className="mc-row">
-            <button type="button" className="mc-btn mc-btn-outline" onClick={allowMic} disabled={asking}>
-              <Mic strokeWidth={1.75} aria-hidden />
-              {asking ? "Waiting for your answer…" : "Allow microphone"}
-            </button>
-            <span className="hint">Chrome asks once. Choose “Allow while visiting the site”.</span>
-          </div>
-        )}
-
-        {mic === "denied" && (
-          <div className="alert" role="alert">
-            <MicOff className="ic" size={22} strokeWidth={1.75} aria-hidden />
-            <div style={{ flex: 1 }}>
-              <b>The microphone is blocked for this site.</b>
-              <div style={{ color: "var(--ink-2)", fontSize: 13.5 }}>MinuteCanvas can’t ask again — Chrome only lets you turn it back on:</div>
-              <ol>
-                <li>
-                  Click the <b>site icon</b> at the left of the address bar.
-                </li>
-                <li>
-                  Switch <b>Microphone</b> to <b>Allow</b>.
-                </li>
-                <li>Come back here. This page notices by itself — no reload needed.</li>
-              </ol>
-              <div className="mc-row" style={{ marginTop: 12 }}>
-                <button type="button" className="mc-btn mc-btn-secondary mc-btn-sm" onClick={tryAgain}>
-                  Try again
-                </button>
-                <a className="link" href="https://support.google.com/chrome/answer/2693767" target="_blank" rel="noopener">
-                  Chrome help ↗
-                </a>
-                {stillBlocked && <span className="hint">Still blocked. Switch it to Allow in the address bar first.</span>}
-              </div>
+        <div className="setup-cols">
+          <div className="setup-col">
+            <div className="field">
+              <label htmlFor="mt">
+                Meeting title <span className="opt">(optional)</span>
+              </label>
+              <input id="mt" className="input" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} placeholder="Muse Spark names it if you leave this empty" />
             </div>
+            <div className="field">
+              <label htmlFor="mw">Names and project words</label>
+              <input id="mw" className="input" value={keywords} onChange={(e) => setKeywords(e.target.value)} maxLength={600} placeholder="Kasun, Amali, Stripe, MinuteCanvas" />
+              <span className="hint">Comma-separated. Helps Muse Voice spell them right.</span>
+            </div>
+            {showCode ? (
+              <div className="field">
+                <label htmlFor="ac">Access code</label>
+                <input
+                  id="ac"
+                  className="input"
+                  value={accessCode}
+                  onChange={(e) => setAccessCode(e.target.value)}
+                  maxLength={100}
+                  type="password"
+                  autoComplete="off"
+                  placeholder="Only if this server asks for one"
+                />
+              </div>
+            ) : (
+              <button type="button" className="link link-btn" onClick={() => setShowCode(true)}>
+                <KeyRound size={14} strokeWidth={1.75} aria-hidden /> Have an access code?
+              </button>
+            )}
           </div>
-        )}
 
-        {mic === "missing" && (
-          <div className="alert" role="alert">
-            <MicOff className="ic" size={22} strokeWidth={1.75} aria-hidden />
-            <div style={{ flex: 1 }}>
-              <b>No microphone found.</b>
-              <div style={{ color: "var(--ink-2)", fontSize: 13.5 }}>Plug in or turn on a microphone, then try again.</div>
-              <div className="mc-row" style={{ marginTop: 12 }}>
-                <button type="button" className="mc-btn mc-btn-secondary mc-btn-sm" onClick={allowMic}>
-                  Try again
+          <div className="setup-col">
+            <div className="field" role="group" aria-labelledby="audio-l">
+              <span className="flabel" id="audio-l">
+                Audio
+              </span>
+              <div className="choices">
+                <button type="button" className={`choice ${source === "mic" ? "on" : ""}`} onClick={() => setSource("mic")} aria-pressed={source === "mic"}>
+                  <Mic size={22} strokeWidth={1.75} aria-hidden />
+                  <span>
+                    <b>Mic</b>
+                    <span>Everyone is in the room</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={`choice ${source === "mic_tab" ? "on" : ""}`}
+                  onClick={() => tabOk && setSource("mic_tab")}
+                  aria-pressed={source === "mic_tab"}
+                  disabled={!tabOk}
+                >
+                  <MonitorSpeaker size={22} strokeWidth={1.75} aria-hidden />
+                  <span>
+                    <b>Mic + meeting tab</b>
+                    <span>{tabOk ? "Google Meet or Zoom in Chrome" : "Needs Chrome on a computer"}</span>
+                  </span>
                 </button>
               </div>
+              <span className="hint">
+                {source === "mic_tab"
+                  ? "Next, Chrome asks which tab to share. Pick the meeting tab and turn on “Also share tab audio”. Use headphones so your mic doesn’t pick up the speakers."
+                  : "Put the laptop where it can hear everyone."}
+              </span>
             </div>
-          </div>
-        )}
 
-        {mic === "granted" && (
-          <div className="mc-row">
-            <span className="mc-tag mc-tag-ok">
-              <Check strokeWidth={2} aria-hidden />
-              Microphone ready
-            </span>
-            {device && <span className="hint">{device}</span>}
-          </div>
-        )}
+            {(mic === "prompt" || mic === "unknown") && (
+              <div className="mc-row">
+                <button type="button" className="mc-btn mc-btn-outline" onClick={allowMic} disabled={asking}>
+                  <Mic strokeWidth={1.75} aria-hidden />
+                  {asking ? "Waiting for your answer…" : "Allow microphone"}
+                </button>
+                <span className="hint">Chrome asks once. Choose “Allow while visiting the site”.</span>
+              </div>
+            )}
 
-        {showCode ? (
-          <div className="field">
-            <label htmlFor="ac">Access code</label>
-            <input
-              id="ac"
-              className="input"
-              value={accessCode}
-              onChange={(e) => setAccessCode(e.target.value)}
-              maxLength={100}
-              type="password"
-              autoComplete="off"
-              placeholder="Only if this server asks for one"
-            />
-          </div>
-        ) : (
-          <button type="button" className="link link-btn" onClick={() => setShowCode(true)}>
-            <KeyRound size={14} strokeWidth={1.75} aria-hidden /> Have an access code?
-          </button>
-        )}
+            {mic === "denied" && (
+              <div className="alert" role="alert">
+                <MicOff className="ic" size={22} strokeWidth={1.75} aria-hidden />
+                <div style={{ flex: 1 }}>
+                  <b>The microphone is blocked for this site.</b>
+                  <div style={{ color: "var(--ink-2)", fontSize: 13.5 }}>MinuteCanvas can’t ask again — Chrome only lets you turn it back on:</div>
+                  <ol>
+                    <li>
+                      Click the <b>site icon</b> at the left of the address bar.
+                    </li>
+                    <li>
+                      Switch <b>Microphone</b> to <b>Allow</b>.
+                    </li>
+                    <li>Come back here. This page notices by itself — no reload needed.</li>
+                  </ol>
+                  <div className="mc-row" style={{ marginTop: 12 }}>
+                    <button type="button" className="mc-btn mc-btn-secondary mc-btn-sm" onClick={tryAgain}>
+                      Try again
+                    </button>
+                    <a className="link" href="https://support.google.com/chrome/answer/2693767" target="_blank" rel="noopener">
+                      Chrome help ↗
+                    </a>
+                    {stillBlocked && <span className="hint">Still blocked. Switch it to Allow in the address bar first.</span>}
+                  </div>
+                </div>
+              </div>
+            )}
 
-        <label className="check">
-          <input type="checkbox" checked={noticed} onChange={(e) => setNoticed(e.target.checked)} />
-          <span>
-            <b>Everyone in this meeting knows it is being transcribed.</b>
-            <span className="hint">Audio goes to Meta for live transcription and is never stored. A text replay is saved after Stop for 30 days.</span>
-          </span>
-        </label>
+            {mic === "missing" && (
+              <div className="alert" role="alert">
+                <MicOff className="ic" size={22} strokeWidth={1.75} aria-hidden />
+                <div style={{ flex: 1 }}>
+                  <b>No microphone found.</b>
+                  <div style={{ color: "var(--ink-2)", fontSize: 13.5 }}>Plug in or turn on a microphone, then try again.</div>
+                  <div className="mc-row" style={{ marginTop: 12 }}>
+                    <button type="button" className="mc-btn mc-btn-secondary mc-btn-sm" onClick={allowMic}>
+                      Try again
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {mic === "granted" && (
+              <div className="mc-row">
+                <span className="mc-tag mc-tag-ok">
+                  <Check strokeWidth={2} aria-hidden />
+                  Microphone ready
+                </span>
+                {device && <span className="hint">{device}</span>}
+              </div>
+            )}
+          </div>
+        </div>
 
         {error && (
           <p className="form-error" role="alert">
@@ -317,20 +317,29 @@ export function Setup({
           </p>
         )}
 
-        <div className="setup-foot">
-          <button type="button" className="mc-btn mc-btn-outline mc-btn-sm" onClick={copyNotice}>
-            {copied ? <Check strokeWidth={2} aria-hidden /> : <Copy strokeWidth={1.75} aria-hidden />}
-            {copied ? "Copied — paste it in the meeting chat" : "Copy notice for the meeting chat"}
-          </button>
-          <button
-            type="submit"
-            className="mc-btn mc-btn-primary mc-btn-lg"
-            disabled={!ready}
-            title={!noticed ? "Tick the box above first" : !micReady ? "Allow the microphone first" : undefined}
-          >
-            <AudioLines strokeWidth={1.75} aria-hidden />
-            {busy ? "Starting…" : "Start recording"}
-          </button>
+        <div className="setup-bottom">
+          <label className="check">
+            <input type="checkbox" checked={noticed} onChange={(e) => setNoticed(e.target.checked)} />
+            <span>
+              <b>Everyone in this meeting knows it is being transcribed.</b>
+              <span className="hint">Audio goes to Meta for live transcription and is never stored. A text replay is saved after Stop for 30 days.</span>
+            </span>
+          </label>
+          <div className="setup-foot">
+            <button type="button" className="mc-btn mc-btn-outline mc-btn-sm" onClick={copyNotice}>
+              {copied ? <Check strokeWidth={2} aria-hidden /> : <Copy strokeWidth={1.75} aria-hidden />}
+              {copied ? "Copied — paste it in the meeting chat" : "Copy notice for the meeting chat"}
+            </button>
+            <button
+              type="submit"
+              className="mc-btn mc-btn-primary mc-btn-lg"
+              disabled={!ready}
+              title={!noticed ? "Tick the box first" : !micReady ? "Allow the microphone first" : undefined}
+            >
+              <AudioLines strokeWidth={1.75} aria-hidden />
+              {busy ? "Starting…" : "Start recording"}
+            </button>
+          </div>
         </div>
       </form>
     </div>

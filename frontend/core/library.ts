@@ -1,24 +1,15 @@
 // The signed-in app's data: the visitor (Google account or "not signed in"), their meetings, and the numbers the
-// Dashboard, Meetings, Findings and Usage pages show. Signed in: the account's list (this browser's meetings are added
-// to it first). Signed out: the meetings made in this browser. Numbers are real or absent, never samples.
+// Dashboard, Meetings, Findings and Usage pages show. Signed in: the account's list. Signed out: nothing — the records
+// pages ask to sign in (someone else using this browser must not see the meetings). Meetings made here while signed
+// out are offered to the account after sign-in (ClaimPrompt), never added silently. Numbers are real or absent.
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import {
-  AUTH_EVENT,
-  AccountError,
-  claimLocal,
-  currentAuth,
-  localMeetings,
-  type Finding,
-  type FindingKind,
-  type MeetingRow,
-  type User,
-} from "./account";
+import { AUTH_EVENT, AccountError, currentAuth, myMeetings, type Finding, type FindingKind, type MeetingRow, type User } from "./account";
 
 export interface Library {
-  loading: boolean;
+  loading: boolean;            // true on the server render and until the first check in the browser
   user: User | null;
-  rows: MeetingRow[];          // newest first
+  rows: MeetingRow[];          // newest first; always empty when signed out
   error: string | null;
   reload: () => void;
   drop: (rid: string) => void; // after a delete
@@ -46,19 +37,19 @@ export function useLibrary(): Library {
       const a = currentAuth();
       if (a) {
         try {
-          const list = await claimLocal();
+          const j = await myMeetings();
           if (cancelled) return;
           setUser(currentAuth()?.user ?? a.user);
-          setRows(newestFirst(list));
+          setRows(newestFirst(j.meetings));
           setLoading(false);
           return;
         } catch (e) {
           if (cancelled) return;
           if (!(e instanceof AccountError && e.status === 401)) {
-            // server unreachable: still show this browser's meetings
+            // server unreachable: still signed in, the list just couldn't load
             setError(e instanceof AccountError ? e.message : "Couldn't load your meetings.");
             setUser(a.user);
-            setRows(newestFirst(localMeetings()));
+            setRows([]);
             setLoading(false);
             return;
           }
@@ -66,7 +57,7 @@ export function useLibrary(): Library {
       }
       if (cancelled) return;
       setUser(null);
-      setRows(newestFirst(localMeetings()));
+      setRows([]);
       setLoading(false);
     })();
     return () => {

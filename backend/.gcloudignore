@@ -1,0 +1,8 @@
+# Cloud Run source deploy: upload only what the Dockerfile uses.
+# Never upload .env (API key), .venv, debug/ or replays/ (meeting transcripts), bench/ or tests/.
+/*
+!/Dockerfile
+!/.dockerignore
+!/requirements.txt
+!/app/
+__pycache__/

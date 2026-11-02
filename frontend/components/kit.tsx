@@ -1,6 +1,6 @@
 "use client";
 // Design-system pieces shared by the app pages: finding tags, stat cards with bars, segmented controls, empty states.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Bug, CircleCheck, CircleHelp, TriangleAlert, type LucideIcon } from "lucide-react";
 import type { FindingKind } from "@/core/account";
 import { KIND_WORD, type Bar } from "@/core/library";
@@ -48,7 +48,16 @@ export function Seg<T extends string>({
   );
 }
 
-/** A dashboard number with its bars (always brand); hover a bar for its date and value. */
+/** false on the server render and the first browser render, true after mount. Dates (locale, time zone, "today")
+ *  differ between the server and the visitor's browser, so date text is only rendered after mount (no hydration
+ *  mismatch). */
+export function useMounted(): boolean {
+  const [m, setM] = useState(false);
+  useEffect(() => setM(true), []);
+  return m;
+}
+
+/** A dashboard number with its bars (always brand); hover a bar for its date and value. Bar dates appear after mount. */
 export function StatCard({
   value,
   label,
@@ -67,6 +76,7 @@ export function StatCard({
   fmt?: (v: number) => string;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const mounted = useMounted();
   const max = Math.max(0, ...data.map((d) => d.value));
   return (
     <div className="mc-card mc-stat">
@@ -81,10 +91,10 @@ export function StatCard({
             key={k}
             style={{ height: d.value && max ? `${Math.max(4, Math.round((d.value / max) * 100))}%` : "3px" }}
             onMouseEnter={() => setHover(k)}
-            aria-label={`${d.tip}: ${fmt(d.value)} ${unit}`}
+            aria-label={mounted ? `${d.tip}: ${fmt(d.value)} ${unit}` : undefined}
           />
         ))}
-        {hover != null && (
+        {hover != null && mounted && (
           <span className="mc-tip" style={{ left: `${((hover + 0.5) / data.length) * 100}%` }} role="tooltip">
             <b>{fmt(data[hover].value)}</b> {unit}
             <span>{data[hover].tip}</span>
@@ -93,7 +103,7 @@ export function StatCard({
       </div>
       <div className="mc-axis" style={{ gridTemplateColumns: `repeat(${data.length}, 1fr)`, gap: data.length > 10 ? 4 : 10 }}>
         {data.map((d, k) => (
-          <span key={k}>{d.label}</span>
+          <span key={k}>{mounted ? d.label : ""}</span>
         ))}
       </div>
     </div>

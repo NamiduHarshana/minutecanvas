@@ -26,6 +26,7 @@ import { useTheme, type ThemePref } from "@/core/theme";
 import { SITE } from "@/core/site";
 import { Initials } from "./kit";
 import { Mark } from "./Logo";
+import { ClaimPrompt } from "./SignIn";
 
 export type NavKey = "dashboard" | "newm" | "meetings" | "findings" | "usage" | "account";
 
@@ -58,6 +59,7 @@ export function AppShell({ active, children }: { active: NavKey; children: React
       <main className="main" id="content">
         {children}
       </main>
+      <ClaimPrompt />
     </div>
   );
 }
@@ -155,7 +157,6 @@ function Me({ active }: { active: boolean }) {
         </span>
         <span className="who">
           <b>Not signed in</b>
-          <span className="sub">Meetings stay in this browser</span>
         </span>
         <a className="mc-btn mc-btn-outline mc-btn-xs" href="/account">
           Sign in

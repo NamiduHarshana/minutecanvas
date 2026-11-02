@@ -28,7 +28,7 @@ gcloud run deploy minutecanvas-web --source frontend --project minutecanvas-nh20
 - Public (top nav, no sidebar): `/` landing · `/privacy`
 - App (left sidebar): `/dashboard` · `/meet` new meeting (becomes the full-screen live meeting) · `/meetings` · `/findings` · `/usage` · `/account` (Google sign-in, theme, delete all)
 - `/replay?id=…` full-screen replay: `&view=report` opens the report, `&f=<finding id>` opens a finding, `&t=<seconds>` starts there
-- Signed out, the app pages show the meetings made in this browser (kept in local storage); signing in adds them to the account.
+- Records need sign-in: signed out, Dashboard / Meetings / Findings / Usage show only "Sign in to see your meetings" (another person on the same computer must not see them). Starting a meeting never needs sign-in. Meetings made signed out stay hidden in local storage; after sign-in a dialog asks "Add N meetings made in this browser to your account?" (Add = claim, Not mine = forget them in this browser).
 - Theme: dark by default, follows the OS; Account › Appearance (or the sidebar ⋯ menu) overrides it. Report slides and the board export stay light.
 - Design: tokens in `app/tokens.css` (from the approved "MinuteCanvas Design System"), components and screens in `app/globals.css`.
 - Landing settings in `.env.production`: `NEXT_PUBLIC_DEMO_VIDEO_ID`, `NEXT_PUBLIC_DEMO_REPLAY_ID`, `NEXT_PUBLIC_CONTACT_EMAIL`.

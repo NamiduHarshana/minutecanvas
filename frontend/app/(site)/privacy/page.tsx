@@ -124,7 +124,8 @@ export default function Privacy() {
         <p>
           MinuteCanvas uses your browser&rsquo;s local storage, not cookies, to remember your setup choices (audio source and project words), the meetings you
           made on this browser (with their summaries, and the key that lets you delete them), your theme and your sign-in. You can clear it at any time in your browser settings.
-          Signing out also removes the meeting list from the browser.
+          Meetings made here while nobody is signed in are not listed in the app: after someone signs in, they are asked whether to add them to
+          their account or remove them from this browser. Signing out also removes the meeting list from the browser.
         </p>
 
         <h2>Other services</h2>

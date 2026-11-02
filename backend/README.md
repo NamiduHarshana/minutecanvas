@@ -51,6 +51,7 @@ gcloud run deploy minutecanvas-api --source backend --project minutecanvas-nh202
   --memory 512Mi --set-secrets META_API_KEY=meta-api-key:latest \
   --set-env-vars FRONTEND_ORIGIN=https://YOUR-FRONTEND.run.app,ACCESS_CODE=CHOOSE_ONE
 ```
+- `backend/.gcloudignore` uploads only `Dockerfile`, `.dockerignore`, `requirements.txt` and `app/` (never `.env`, `.venv`, `debug/`, `replays/`, `bench/`, `tests/`). Check with `gcloud meta list-files-for-upload backend`.
 - `--max-instances 1`: sessions live in memory.
 - `--no-cpu-throttling`: the voice pacer must keep sending silence while the browser is reconnecting.
 - `--timeout 3600`: WebSocket closes at 60 min; the browser reconnects and resends.

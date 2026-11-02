@@ -122,7 +122,7 @@ export interface ReplayInfo {
   duration_s: number;
   gaps: number;
   conflicts: number;
-  // v6.19: kept in this browser's meeting list for the Dashboard, Findings and Usage pages
+  // v6.19: the meeting's row (this browser's list until it is in an account) for the Dashboard, Findings and Usage pages
   bugs?: number;
   answered?: number;
   usage?: import("./account").Usage;

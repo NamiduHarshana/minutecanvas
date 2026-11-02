@@ -1,20 +1,12 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { LoaderCircle } from "lucide-react";
-import {
-  AccountError,
-  authExpiry,
-  deleteAllMyData,
-  googleClientId,
-  loadGoogle,
-  localMeetings,
-  signInWithGoogle,
-  signOut,
-} from "@/core/account";
+import { AccountError, authExpiry, deleteAllMyData, signOut } from "@/core/account";
 import { fmtDay, useLibrary } from "@/core/library";
 import { useTheme, type ThemePref } from "@/core/theme";
 import { SITE } from "@/core/site";
 import { Initials, Seg } from "../kit";
+import { SignInCard } from "../SignIn";
 import { Toasts, useToasts } from "../Toasts";
 
 export function Account() {
@@ -95,7 +87,12 @@ export function Account() {
           </section>
         </>
       ) : (
-        <SignIn onError={(m) => toasts.show(m, "error")} />
+        <SignInCard
+          title="Sign in"
+          badge="Optional"
+          lead="Sign in with Google to see every meeting in one list on any device, with its replay, report and findings."
+          onError={(m) => toasts.show(m, "error")}
+        />
       )}
 
       <section className="mc-card">
@@ -130,99 +127,5 @@ export function Account() {
       )}
       <Toasts {...toasts} />
     </div>
-  );
-}
-
-function SignIn({ onError }: { onError: (m: string) => void }) {
-  const box = useRef<HTMLDivElement>(null);
-  const [state, setState] = useState<"loading" | "ready" | "off" | "error" | "busy">("loading");
-  const [local, setLocal] = useState(0);
-  const err = useRef(onError);
-  err.current = onError;
-
-  useEffect(() => {
-    setLocal(localMeetings().length);
-    let cancelled = false;
-    googleClientId().then(
-      (cid) => {
-        if (cancelled) return;
-        if (!cid) return setState("off");
-        loadGoogle().then(
-          (g) => {
-            if (cancelled || !box.current) return;
-            g.accounts.id.initialize({
-              client_id: cid,
-              callback: async (r: { credential?: string }) => {
-                if (!r.credential) return;
-                setState("busy");
-                try {
-                  await signInWithGoogle(r.credential);       // the page reloads its data on the sign-in event
-                } catch (e) {
-                  err.current(e instanceof AccountError ? e.message : "Sign-in failed. Please try again.");
-                  setState("ready");
-                }
-              },
-              auto_select: false,
-              cancel_on_tap_outside: true,
-              use_fedcm_for_button: true,
-            });
-            box.current.innerHTML = "";
-            g.accounts.id.renderButton(box.current, {
-              theme: document.documentElement.dataset.theme === "light" ? "outline" : "filled_black",
-              size: "large", text: "signin_with", shape: "pill", logo_alignment: "left", width: 280 });
-            setState("ready");
-          },
-          () => !cancelled && setState("error"),
-        );
-      },
-      () => !cancelled && setState("error"),
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return (
-    <section className="mc-card signin">
-      <div className="card-h">
-        <h3>Sign in</h3>
-        <span className="hint">Optional</span>
-      </div>
-      <p className="lead-s">Sign in with Google to keep every meeting in one list on any device, with its replay, report and findings.</p>
-      <ul className="points">
-        <li>We keep only your email address and name.</li>
-        <li>You don’t need to sign in to run a meeting.</li>
-        {local > 0 && state !== "off" && (
-          <li>
-            <b>
-              {local} meeting{local === 1 ? "" : "s"} made in this browser
-            </b>{" "}
-            will be added to your account when you sign in.
-          </li>
-        )}
-      </ul>
-      <div ref={box} className="gis" hidden={state !== "ready"} />
-      {state === "loading" && (
-        <p className="loading" role="status">
-          <LoaderCircle size={16} className="spin" aria-hidden /> Loading Google sign-in…
-        </p>
-      )}
-      {state === "busy" && (
-        <p className="loading" role="status">
-          <LoaderCircle size={16} className="spin" aria-hidden /> Signing in…
-        </p>
-      )}
-      {state === "off" && <p className="hint">Sign-in isn’t set up on this server, so your meetings stay in this browser.</p>}
-      {state === "error" && (
-        <p className="form-error" role="alert">
-          Google sign-in couldn’t load. Check your connection or any blocker, then reload the page.
-        </p>
-      )}
-      {state !== "off" && (
-        <p className="hint" style={{ margin: 0 }}>
-          By signing in you agree to the <a href="/privacy">privacy policy</a>.
-        </p>
-      )}
-    </section>
   );
 }

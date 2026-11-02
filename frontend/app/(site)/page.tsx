@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 const FAQ: { q: string; a: React.ReactNode }[] = [
   {
     q: "Do I need an account?",
-    a: "No. Start a meeting right away. Sign in with Google only to keep your meetings in one list across devices.",
+    a: "No. Start a meeting right away. Sign in with Google only to see your meetings, findings and usage in one list across devices.",
   },
   {
     q: "Does it work with Google Meet and Zoom?",

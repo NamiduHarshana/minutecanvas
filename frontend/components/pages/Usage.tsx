@@ -1,8 +1,11 @@
 "use client";
 import { useState } from "react";
+import { LoaderCircle } from "lucide-react";
 import { bars, fmtClock, fmtNum, fmtSpan, inRange, replayHref, sum, useLibrary, type Range } from "@/core/library";
 import type { MeetingRow } from "@/core/account";
 import { Empty, Seg, StatCard } from "../kit";
+import { SignInGate } from "../SignIn";
+import { Toasts, useToasts } from "../Toasts";
 
 const u = (r: MeetingRow) => r.usage;
 
@@ -21,6 +24,8 @@ export function Usage() {
     </div>
   );
   const older = rows.filter((r) => !r.usage).length;
+  const toasts = useToasts();
+  const signedIn = !lib.loading && !!lib.user;
 
   return (
     <div className="wrap">
@@ -29,28 +34,38 @@ export function Usage() {
           <h1 className="h-page">Usage</h1>
           <p className="sub">How much Meta AI work went into your meetings.</p>
         </div>
-        <Seg label="Range" value={range} onChange={setRange} options={[{ id: "7d", label: "7d" }, { id: "30d", label: "30d" }, { id: "90d", label: "90d" }]} />
+        {signedIn && (
+          <Seg label="Range" value={range} onChange={setRange} options={[{ id: "7d", label: "7d" }, { id: "30d", label: "30d" }, { id: "90d", label: "90d" }]} />
+        )}
       </div>
 
-      <div className="grid4">
-        <StatCard
-          head={head("Muse Voice", "Voice")}
-          value={fmtSpan(voice)}
-          label="Transcribed"
-          data={bars(rows, range, (r) => (u(r)?.voice_s ?? 0) / 60)}
-          unit="min"
-          fmt={(v) => String(Math.round(v))}
-        />
-        <StatCard head={head("Muse Spark", "Spark")} value={fmtNum(calls)} label="Agent calls" data={bars(rows, range, (r) => u(r)?.spark_calls ?? 0)} unit="calls" />
-        <StatCard
-          head={head("Muse Spark", "Spark")}
-          value={fmtNum(tools)}
-          label="Tool calls checked"
-          data={bars(rows, range, (r) => u(r)?.tool_calls ?? 0)}
-          unit="tool calls"
-        />
-        <StatCard head={head("Muse Image", "Image")} value={fmtNum(imgs)} label="Card pictures" data={bars(rows, range, (r) => u(r)?.images ?? 0)} unit="pictures" />
-      </div>
+      {lib.loading ? (
+        <p className="loading" role="status">
+          <LoaderCircle size={18} className="spin" aria-hidden /> Loading…
+        </p>
+      ) : !lib.user ? (
+        <SignInGate onError={(m) => toasts.show(m, "error")} />
+      ) : (
+        <div className="grid4">
+          <StatCard
+            head={head("Muse Voice", "Voice")}
+            value={fmtSpan(voice)}
+            label="Transcribed"
+            data={bars(rows, range, (r) => (u(r)?.voice_s ?? 0) / 60)}
+            unit="min"
+            fmt={(v) => String(Math.round(v))}
+          />
+          <StatCard head={head("Muse Spark", "Spark")} value={fmtNum(calls)} label="Agent calls" data={bars(rows, range, (r) => u(r)?.spark_calls ?? 0)} unit="calls" />
+          <StatCard
+            head={head("Muse Spark", "Spark")}
+            value={fmtNum(tools)}
+            label="Tool calls checked"
+            data={bars(rows, range, (r) => u(r)?.tool_calls ?? 0)}
+            unit="tool calls"
+          />
+          <StatCard head={head("Muse Image", "Image")} value={fmtNum(imgs)} label="Card pictures" data={bars(rows, range, (r) => u(r)?.images ?? 0)} unit="pictures" />
+        </div>
+      )}
 
       <section className="mc-card">
         <div className="card-h">
@@ -81,56 +96,61 @@ export function Usage() {
         </div>
       </section>
 
-      <section className="mc-card scroll table-card">
-        {!lib.loading && rows.length === 0 ? (
-          <Empty title={`No meetings in the last ${range.replace("d", " days")}`}>
-            <p>Usage shows up here after you stop a meeting.</p>
-            <a className="mc-btn mc-btn-primary mc-btn-sm" href="/meet">
-              New meeting
-            </a>
-          </Empty>
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Meeting</th>
-                <th>Transcribed</th>
-                <th>Spark calls</th>
-                <th>Tools used</th>
-                <th>Pictures</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.rid}>
-                  <td>
-                    <a className="t-link" href={replayHref(r.rid)}>
-                      {r.title || "Untitled meeting"}
-                    </a>
-                  </td>
-                  <td>
-                    <span className="mc-time c2">{fmtClock(r.usage?.voice_s ?? r.duration_s ?? 0)}</span>
-                  </td>
-                  <td>
-                    <span className="mc-time c2">{r.usage ? fmtNum(r.usage.spark_calls) : "–"}</span>
-                  </td>
-                  <td>
-                    <span className="mc-time c2">{r.usage ? fmtNum(r.usage.tool_calls) : "–"}</span>
-                  </td>
-                  <td>
-                    <span className="mc-time c2">{r.usage ? fmtNum(r.usage.images) : "–"}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-      {older > 0 && (
-        <p className="hint" style={{ margin: 0 }}>
-          “–”: {older === 1 ? "this meeting was" : "these meetings were"} recorded before usage was kept per meeting.
-        </p>
+      {signedIn && (
+        <>
+          <section className="mc-card scroll table-card">
+            {!lib.loading && rows.length === 0 ? (
+              <Empty title={`No meetings in the last ${range.replace("d", " days")}`}>
+                <p>Usage shows up here after you stop a meeting.</p>
+                <a className="mc-btn mc-btn-primary mc-btn-sm" href="/meet">
+                  New meeting
+                </a>
+              </Empty>
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Meeting</th>
+                    <th>Transcribed</th>
+                    <th>Spark calls</th>
+                    <th>Tools used</th>
+                    <th>Pictures</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.rid}>
+                      <td>
+                        <a className="t-link" href={replayHref(r.rid)}>
+                          {r.title || "Untitled meeting"}
+                        </a>
+                      </td>
+                      <td>
+                        <span className="mc-time c2">{fmtClock(r.usage?.voice_s ?? r.duration_s ?? 0)}</span>
+                      </td>
+                      <td>
+                        <span className="mc-time c2">{r.usage ? fmtNum(r.usage.spark_calls) : "–"}</span>
+                      </td>
+                      <td>
+                        <span className="mc-time c2">{r.usage ? fmtNum(r.usage.tool_calls) : "–"}</span>
+                      </td>
+                      <td>
+                        <span className="mc-time c2">{r.usage ? fmtNum(r.usage.images) : "–"}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+          {older > 0 && (
+            <p className="hint" style={{ margin: 0 }}>
+              “–”: {older === 1 ? "this meeting was" : "these meetings were"} recorded before usage was kept per meeting.
+            </p>
+          )}
+        </>
       )}
+      <Toasts {...toasts} />
     </div>
   );
 }
