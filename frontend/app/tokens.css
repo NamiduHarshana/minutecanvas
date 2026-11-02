@@ -1,0 +1,94 @@
+/* MinuteCanvas design system tokens (approved Nov 2 2026, "MinuteCanvas Design System").
+   Dark is the default; Light is the same system with lighter grounds. <html data-theme> is set before the first paint
+   from the visitor's choice (Account > Appearance) or their OS setting. Any element can carry data-theme="light"
+   (the report slides and the board export are light "paper" in both themes). */
+:root, [data-theme="dark"] {
+  --bg: #0f1012;
+  --surface: #17181b;
+  --surface-2: #1f2024;
+  --surface-3: #2a2b30;
+  --line: #2a2c31;
+  --line-control: #62646d;
+  --ink: #f4f4f5;
+  --ink-2: #c4c6ce;
+  --muted: #8e909a;
+  --brand: #5b5cf0;
+  --on-brand: #ffffff;
+  --brand-text: #a9abff;
+  --brand-soft: #22234a;
+  --gap: #f5a524;
+  --gap-soft: #2e2312;
+  --conflict: #f472c6;
+  --conflict-soft: #33182b;
+  --bug: #ff6b6b;
+  --bug-soft: #351a1c;
+  --ok: #3ccf8e;
+  --ok-soft: #132a20;
+  --speaker-a: #5ec4ff;
+  --speaker-b: #ffb86b;
+  --speaker-c: #b79bff;
+  --shadow-pop: 0 16px 40px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+[data-theme="light"] {
+  --bg: #f6f6f8;
+  --surface: #ffffff;
+  --surface-2: #f1f2f5;
+  --surface-3: #e6e7ec;
+  --line: #e4e5ea;
+  --line-control: #8b8e98;
+  --ink: #111216;
+  --ink-2: #3a3c44;
+  --muted: #5f616b;
+  --brand: #4f46e5;
+  --on-brand: #ffffff;
+  --brand-text: #4338ca;
+  --brand-soft: #eef0fe;
+  --gap: #b45309;
+  --gap-soft: #fef3e2;
+  --conflict: #be185d;
+  --conflict-soft: #fdeaf4;
+  --bug: #c81e1e;
+  --bug-soft: #fdecec;
+  --ok: #15803d;
+  --ok-soft: #e7f6ee;
+  --speaker-a: #0369a1;
+  --speaker-b: #b45309;
+  --speaker-c: #6d28d9;
+  --shadow-pop: 0 16px 40px rgba(17, 18, 22, 0.14);
+  color-scheme: light;
+}
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 96px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-pill: 999px;
+  /* self-hosted (fontsource): the CSP allows fonts from this site only */
+  --font-display: "Archivo Variable", "Archivo", "Inter Variable", "Inter", system-ui, sans-serif;
+  --font-sans: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+/* Names the older components (Flow Map drawer, card modal, report slides, board export) still use. Declared on every
+   themed element so a light "paper" inside the dark app resolves them to light values. */
+:root, [data-theme] {
+  --text: var(--ink);
+  --text-2: var(--ink-2);
+  --border: var(--line);
+  --border-strong: var(--line-control);
+  --red: var(--bug);
+  --green: var(--ok);
+  --amber: var(--gap);
+  --radius: var(--radius-md);
+  --shadow: none;
+  --shadow-lg: var(--shadow-pop);
+  --font: var(--font-sans);
+}

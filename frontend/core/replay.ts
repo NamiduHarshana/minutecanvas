@@ -2,6 +2,7 @@
 "use client";
 import { createContext, useContext } from "react";
 import type { ServerMsg } from "./types";
+import type { Finding, Usage } from "./account";
 import { BACKEND_URL } from "./client";
 import { initialState, reducer, type MeetingState } from "./store";
 
@@ -12,6 +13,10 @@ export interface ReplayData {
   duration_s: number;
   speakers: Record<string, string>;
   events: [number, ServerMsg][];      // [meeting time when it was sent live, message]
+  // v6.19 (missing in older replays: the page works them out from the events)
+  timeline?: { speakers: { speaker: string; t: number; t_end: number }[]; parts: { part: string; t: number; t_end: number }[] };
+  findings?: Finding[];
+  usage?: Usage;
 }
 
 export class ReplayError extends Error {}

@@ -8,7 +8,9 @@ Storage: local folder (REPLAY_DIR, default backend/replays) or a Cloud Storage b
 the service account token comes from the metadata server, so no extra package is needed).
   replays/<rid>/events.json.gz        {"v":1,"title","date","duration_s","speakers","events":[[t, msg], ...]}
   replays/<rid>/images/<img id>       card / cover images
-  replays/<rid>/meta.json             {"created", "key_sha", "owner", title, date, duration, gap/conflict counts}
+  replays/<rid>/meta.json             {"created", "key_sha", "owner", title, date, duration, gap/conflict counts,
+                                       v6.19: bugs, answered, usage {voice_s, spark_calls, tool_calls, images},
+                                       findings [{id, kind, text, step, part, t, quotes, ...}]}
   users/<uid>.json                    a signed-in user's meeting list (see accounts.py)
 
 v6.18: the meeting's own browser gets a secret owner key (only its sha256 is stored) that deletes the replay; a
@@ -77,9 +79,10 @@ class Recorder:
         self.events.append([round(t, 2), json.loads(raw)])   # a copy: later changes to the dicts don't leak in
 
     def payload(self, sid: str, rid: str, title: str | None, date: str, duration_s: float,
-                speakers: dict[str, str]) -> bytes:
+                speakers: dict[str, str], extra: dict | None = None) -> bytes:
+        """extra (v6.19): "timeline" (speaker / part blocks), "findings" and "usage" for the replay page."""
         body = json.dumps({"v": 1, "title": title, "date": date, "duration_s": round(duration_s, 1),
-                           "speakers": speakers, "events": self.events}, separators=(",", ":"))
+                           "speakers": speakers, **(extra or {}), "events": self.events}, separators=(",", ":"))
         # images: the session URL needs the session token; the replay URL needs only the replay id
         body = body.replace(f"/api/sessions/{sid}/images/", f"/api/replays/{rid}/images/")
         return gzip.compress(body.encode(), compresslevel=6)
@@ -232,8 +235,12 @@ def expired(meta: dict, now: float | None = None) -> bool:
     return (now or time.time()) - created > settings.replay_keep_days * 86400
 
 
+SUMMARY_KEYS = ("rid", "title", "date", "duration_s", "gaps", "conflicts", "created",
+                "bugs", "answered", "usage", "findings")     # v6.19: + counts, Meta usage, findings
+
+
 def summary(meta: dict) -> dict:
-    """The dashboard row of a replay (no secrets)."""
-    return {k: meta.get(k) for k in ("rid", "title", "date", "duration_s", "gaps", "conflicts", "created")} | {
+    """The dashboard row of a replay (no secrets). Replays saved before v6.19 have no usage / findings (null)."""
+    return {k: meta.get(k) for k in SUMMARY_KEYS} | {
         "expires": None if pinned(meta.get("rid", "")) else
         round(float(meta.get("created") or 0) + settings.replay_keep_days * 86400)}

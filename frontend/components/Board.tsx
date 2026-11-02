@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { Check, EllipsisVertical, GitBranch, Pencil, Sparkles, Trash2, TriangleAlert } from "lucide-react";
+import { Check, Ellipsis, Pencil, Sparkles, Trash2 } from "lucide-react";
 import type { Card } from "@/core/types";
 import { COLUMNS, COLUMN_META } from "@/core/types";
 import type { Flash, MeetingState } from "@/core/store";
 import { fmtTime } from "@/core/store";
-import { CardMeta, ColumnIcon, Illus, TypeChip } from "./ui";
+import { CardMeta, Illus } from "./ui";
+import { FindingTag } from "./kit";
 
 export interface CardActions {
   open: (id: string) => void;
@@ -16,49 +17,7 @@ export interface CardActions {
 
 const FLASH_TEXT: Record<Flash["kind"], string> = { updated: "Updated", resolved: "Resolved", done: "Done" };
 
-export function Latest({ cards, actions, flash }: { cards: Card[]; actions: CardActions; flash: Record<string, Flash> }) {
-  const latest = cards.slice(-3).reverse();
-  return (
-    <section className="latest" aria-label="Latest cards">
-      <h2 className="section-label">Latest</h2>
-      {latest.length === 0 ? (
-        <div className="latest-empty">
-          <Sparkles size={22} aria-hidden />
-          <p>
-            Cards appear here as people speak. <span>Muse Spark reads the conversation every ~40 seconds and Muse Image draws each card.</span>
-          </p>
-        </div>
-      ) : (
-        <div className="latest-grid">
-          {latest.map((c, i) => (
-            <article
-              key={c.id}
-              className={`latest-card ${flash[c.id] ? "flash" : ""}`}
-              style={{ "--col": COLUMN_META[c.column].color } as React.CSSProperties}
-              onClick={() => actions.open(c.id)}
-              tabIndex={0}
-              onKeyDown={(e) => e.key === "Enter" && actions.open(c.id)}
-            >
-              <Illus card={c} className="lc-illus" eager />
-              <div className="lc-body">
-                <div className="lc-top">
-                  <TypeChip card={c} />
-                  {i === 0 && <span className="badge-new">New</span>}
-                  {flash[c.id] && <span className="badge-upd">{FLASH_TEXT[flash[c.id].kind]}</span>}
-                </div>
-                <h3 className="lc-title">{c.title}</h3>
-                {c.detail && <p className="lc-detail">{c.detail}</p>}
-                {c.column === "questions" && c.resolved && c.answer && <p className="lc-answer">{c.answer}</p>}
-                <CardMeta card={c} />
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
+/** The board: Goals / Decisions / Actions / Updates / Questions. Empty columns stay hidden until something lands. */
 export function Board({
   state,
   cards,
@@ -71,43 +30,44 @@ export function Board({
   readOnly: boolean;
 }) {
   const newestId = cards.length ? cards[cards.length - 1].id : null;
+  const cols = COLUMNS.map((col) => ({ col, list: cards.filter((c) => c.column === col) })).filter((x) => x.list.length > 0);
   return (
-    <section className="board" aria-label="Board">
-      <div className="board-head">
-        <h2 className="section-label">Board</h2>
+    <section className="board-sec" aria-label="Board">
+      <div className="card-h">
+        <span className="lab">Board</span>
+        <span className="hint">Empty columns stay hidden until something lands in them</span>
       </div>
-      <div className="columns">
-        {COLUMNS.map((col) => {
-          const list = cards.filter((c) => c.column === col);
-          const m = COLUMN_META[col];
-          return (
-            <div key={col} className="column" style={{ "--col": m.color, "--soft": m.soft } as React.CSSProperties}>
-              <div className="col-head">
-                <span className="col-icon">
-                  <ColumnIcon column={col} size={15} />
-                </span>
-                <span className="col-name">{m.label}</span>
-                <span className="col-count">{list.length}</span>
-              </div>
-              <div className="col-body">
-                {list.length === 0 && <div className="col-empty">Nothing yet</div>}
-                {list.map((c) => (
-                  <SmallCard key={c.id} card={c} isNew={c.id === newestId} flash={state.flash[c.id]} actions={actions} readOnly={readOnly} />
-                ))}
-              </div>
+      {cols.length === 0 ? (
+        <div className="board-empty">
+          <Sparkles size={22} strokeWidth={1.75} aria-hidden />
+          <span>
+            <b>Cards appear here as people speak.</b>
+            Muse Spark reads the conversation about every 40 seconds; Muse Image draws each card.
+          </span>
+        </div>
+      ) : (
+        <div className="board">
+          {cols.map(({ col, list }) => (
+            <div key={col} className="bcol">
+              <span className={`lab col-${col}`}>
+                {COLUMN_META[col].label} · {list.length}
+              </span>
+              {list.map((c) => (
+                <BoardCard key={c.id} card={c} isNew={c.id === newestId} flash={state.flash[c.id]} actions={actions} readOnly={readOnly} />
+              ))}
             </div>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
 
 function hasMeta(c: Card): boolean {
-  return (c.column === "updates" && !!c.status) || (c.column === "questions" && c.resolved) || !!c.owner || !!c.due;
+  return (c.column === "updates" && !!c.status) || !!c.owner || !!c.due;
 }
 
-function SmallCard({
+function BoardCard({
   card: c,
   isNew,
   flash,
@@ -132,25 +92,24 @@ function SmallCard({
   }, [menu]);
   const struck = c.column === "actions" && c.done;
   const answered = c.column === "questions" && c.resolved;
+  const line = answered && c.answer ? `Answered: ${c.answer}` : c.detail;
   return (
     <article
-      className={`small-card ${flash ? "flash" : ""} ${struck ? "is-done" : ""} ${answered ? "is-answered" : ""} ${c.conflict_ref ? "is-conflict" : ""}`}
+      className={`bcard ${flash ? "flash" : ""} ${struck ? "is-done" : ""} ${answered ? "is-answered" : ""} ${c.conflict_ref ? "is-conflict" : ""}`}
       onClick={() => actions.open(c.id)}
       tabIndex={0}
       onKeyDown={(e) => e.key === "Enter" && e.target === e.currentTarget && actions.open(c.id)}
       title={`${c.flow_ref ? "Found" : "Said"} at ${fmtTime(c.t)}`}
     >
-      <Illus card={c} className="sc-illus" />
+      <Illus card={c} className="img" />
       {(flash || isNew) && (
-        <span className="sc-flag">
-          {flash ? <span className="badge-upd">{FLASH_TEXT[flash.kind]}</span> : <span className="badge-new">New</span>}
-        </span>
+        <span className="bcard-flag">{flash ? <span className="badge-upd">{FLASH_TEXT[flash.kind]}</span> : <span className="badge-new">New</span>}</span>
       )}
-      <div className="sc-body">
-        <div className="sc-title-row">
+      <div className="bcard-body">
+        <div className="bcard-title">
           {c.column === "actions" && (
             <button
-              className={`check ${c.done ? "on" : ""}`}
+              className={`tick ${c.done ? "on" : ""}`}
               aria-label={c.done ? "Mark not done" : "Mark done"}
               disabled={readOnly}
               onClick={(e) => {
@@ -161,34 +120,20 @@ function SmallCard({
               {c.done && <Check size={12} strokeWidth={3} aria-hidden />}
             </button>
           )}
-          <h4 className="sc-title" title={c.title}>
-            {c.title}
-          </h4>
-          {c.flow_ref && (
-            <span className="sc-gap" title="Found by the Flow Map: nobody covered this" aria-label="Flow gap">
-              <GitBranch size={12} aria-hidden />
-            </span>
-          )}
+          <b>{c.title}</b>
         </div>
-        {c.conflict_ref && (
-          <span className="sc-conflict" title="Conflicting statements: the team still has to confirm which one is right">
-            <TriangleAlert size={11} aria-hidden /> {c.column === "decisions" ? "Not decided" : "Conflict"}
-          </span>
-        )}
-        {/* one line only: owner / due / status when there are any, otherwise the detail */}
-        {hasMeta(c) ? (
-          <CardMeta card={c} />
-        ) : (
-          (answered && c.answer ? c.answer : c.detail) && <p className="sc-line">{answered && c.answer ? c.answer : c.detail}</p>
-        )}
+        {c.flow_ref && !answered && <FindingTag kind="gap" small />}
+        {answered && c.flow_ref && <FindingTag kind="answered" small />}
+        {c.conflict_ref && <FindingTag kind="conflict" label={c.column === "decisions" ? "Not decided" : "Conflict"} small />}
+        {hasMeta(c) ? <CardMeta card={c} /> : line && <span className="bcard-line">{line}</span>}
       </div>
       {!readOnly && (
-        <div className="sc-menu" ref={ref} onClick={(e) => e.stopPropagation()}>
-          <button className="icon-btn" aria-label="Card options" onClick={() => setMenu((m) => !m)}>
-            <EllipsisVertical size={16} aria-hidden />
+        <div className="bcard-menu" ref={ref} onClick={(e) => e.stopPropagation()}>
+          <button className="mc-ib" aria-label="Card options" onClick={() => setMenu((m) => !m)}>
+            <Ellipsis size={15} strokeWidth={2} aria-hidden />
           </button>
           {menu && (
-            <div className="menu menu-sm" role="menu">
+            <div className="mc-menu" role="menu">
               <button
                 role="menuitem"
                 onClick={() => {
@@ -196,7 +141,7 @@ function SmallCard({
                   actions.edit(c.id);
                 }}
               >
-                <Pencil size={14} aria-hidden /> Edit
+                <Pencil size={15} strokeWidth={1.75} aria-hidden /> Edit
               </button>
               <button
                 role="menuitem"
@@ -206,7 +151,7 @@ function SmallCard({
                   actions.remove(c.id);
                 }}
               >
-                <Trash2 size={14} aria-hidden /> Delete
+                <Trash2 size={15} strokeWidth={1.75} aria-hidden /> Delete
               </button>
             </div>
           )}
@@ -215,5 +160,3 @@ function SmallCard({
     </article>
   );
 }
-
-

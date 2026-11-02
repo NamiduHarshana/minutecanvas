@@ -302,3 +302,13 @@ export function fmtTime(sec: number): string {
 export function orderedCards(s: MeetingState): Card[] {
   return s.order.map((id) => s.cards[id]).filter(Boolean);
 }
+
+/** Speaker colour class (speaker-a / b / c, then again) by the order people first spoke. */
+export function speakerTones(lines: { speaker: string }[]): (label: string | null) => "sa" | "sb" | "sc" {
+  const order: string[] = [];
+  for (const l of lines) if (!order.includes(l.speaker)) order.push(l.speaker);
+  return (label) => {
+    const k = label ? order.indexOf(label) : -1;
+    return (["sa", "sb", "sc"] as const)[(k < 0 ? order.length : k) % 3];
+  };
+}

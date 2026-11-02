@@ -1,4 +1,3 @@
-import "@fontsource-variable/archivo/wdth.css";
 import "./site.css";
 import { SiteFooter, SiteHeader } from "@/components/site/Chrome";
 

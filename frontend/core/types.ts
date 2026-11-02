@@ -122,6 +122,11 @@ export interface ReplayInfo {
   duration_s: number;
   gaps: number;
   conflicts: number;
+  // v6.19: kept in this browser's meeting list for the Dashboard, Findings and Usage pages
+  bugs?: number;
+  answered?: number;
+  usage?: import("./account").Usage;
+  findings?: import("./account").Finding[];
 }
 
 export type StopStep = "transcript" | "cards" | "images" | "report";

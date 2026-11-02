@@ -6,16 +6,48 @@ import { BACKEND_URL } from "./client";
 
 const MEETINGS_KEY = "minutecanvas.meetings";
 const AUTH_KEY = "minutecanvas.auth";
+export const AUTH_EVENT = "minutecanvas-auth";   // sign-in / sign-out: the sidebar and pages reload their data
 
 export interface MeetingRow {
   rid: string;
   title: string | null;
   date: string;
   duration_s: number;
-  gaps: number;
-  conflicts: number;
+  gaps: number;           // open gaps at the end of the meeting
+  conflicts: number;      // open conflicts at the end
   created?: number;      // unix seconds (server)
   expires?: number | null;
+  // v6.19 (null / missing for meetings saved before it)
+  bugs?: number | null;
+  answered?: number | null;
+  usage?: Usage | null;
+  findings?: Finding[] | null;
+}
+export type FindingKind = "gap" | "conflict" | "bug" | "answered";
+export interface FindingQuote {
+  t: number;
+  speaker: string;
+  text: string;
+}
+/** A gap, answered gap, conflict or bug of a meeting's Flow Map, with the quotes it was checked against. */
+export interface Finding {
+  id: string;
+  kind: FindingKind;
+  text: string;
+  branch?: string;
+  step?: string | null;
+  part?: string | null;
+  t: number;               // meeting time it was found
+  answer?: string | null;
+  settled?: boolean;       // conflicts
+  fixed?: boolean;         // bugs
+  quotes: FindingQuote[];
+}
+export interface Usage {
+  voice_s: number;
+  spark_calls: number;
+  tool_calls: number;
+  images: number;
 }
 export interface LocalMeeting extends MeetingRow {
   key: string;           // owner key: deletes the replay without signing in
@@ -55,6 +87,7 @@ export function addLocalMeeting(m: LocalMeeting) {
   const list = localMeetings().filter((x) => x.rid !== m.rid);
   list.push(m);
   saveLocal(list);
+  window.dispatchEvent(new Event(AUTH_EVENT));
 }
 export function removeLocalMeeting(rid: string) {
   saveLocal(localMeetings().filter((x) => x.rid !== rid));
@@ -73,11 +106,26 @@ export function currentAuth(): Auth | null {
   }
 }
 function saveAuth(a: Auth | null) {
+  const had = !!currentAuth();
   try {
     if (a) localStorage.setItem(AUTH_KEY, JSON.stringify(a));
     else localStorage.removeItem(AUTH_KEY);
   } catch {
     /* ignore */
+  }
+  if (had !== !!a || a) window.dispatchEvent(new Event(AUTH_EVENT));
+}
+
+/** When the login token stops working (the token's body is plain JSON; only its signature is secret). */
+export function authExpiry(): Date | null {
+  const a = currentAuth();
+  if (!a) return null;
+  try {
+    const body = a.token.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
+    const exp = Number(JSON.parse(atob(body + "=".repeat((4 - (body.length % 4)) % 4))).exp);
+    return exp ? new Date(exp * 1000) : null;
+  } catch {
+    return null;
   }
 }
 /** Authorization header when signed in (a meeting started signed in goes straight into "My meetings"). */

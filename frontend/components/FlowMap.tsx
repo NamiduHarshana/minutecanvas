@@ -18,7 +18,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import { edgePath, layoutFlow, type LaidEdge } from "@/core/flowLayout";
-import { conflictTag, issueTag, stepIcon, stepNote, type StepNote } from "@/core/flowLook";
+import { conflictTag, issueTag, stepNote, type StepNote } from "@/core/flowLook";
 import {
   Bug,
   ChevronDown,
@@ -39,6 +39,7 @@ import {
   X,
 } from "lucide-react";
 import { useReplay } from "@/core/replay";
+import { useTheme } from "@/core/theme";
 import type { Evidence, FlowContradiction, FlowData, FlowGap, FlowStats, FlowStep, StepKind } from "@/core/types";
 import type { FlowStatus } from "@/core/store";
 import { fmtTime, speakerName } from "@/core/store";
@@ -84,8 +85,7 @@ type LaneData = { label: string };
 
 const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
   const { step, num, bugs, conflicts, note, fresh, selected, focused, jumps, onJump } = data;
-  const Icon = stepIcon(step);
-  const state = bugs ? "is-bug" : conflicts ? "is-conflict" : "";
+  const state = conflicts ? "is-conflict" : bugs ? "is-bug" : "";
   return (
     <div
       className={`fm-node kind-${step.kind} ${state} ${fresh ? "is-fresh" : ""} ${selected ? "is-selected" : ""} ${focused ? "is-focus" : ""}`}
@@ -116,13 +116,8 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
         )}
         {fresh && <b className="fm-fresh">{step.updated_t != null ? "Updated" : "New"}</b>}
       </span>
-      <span className="fm-main">
-        <span className="fm-icon">
-          <Icon size={16} strokeWidth={2.1} aria-hidden />
-        </span>
-        <span className="fm-label" title={step.label}>
-          {step.label}
-        </span>
+      <span className="fm-label" title={step.label}>
+        {step.label}
       </span>
       {note && (
         <span className={`fm-note-line ${note.tone}`} title={note.tone === "quote" ? `“${note.text}”` : note.text}>
@@ -132,13 +127,13 @@ const StepNode = memo(function StepNode({ data }: NodeProps<Node<StepData>>) {
       {(bugs > 0 || conflicts > 0) && (
         <span className="fm-tags">
           {bugs > 0 && (
-            <span className="fm-tag bug">
-              <Bug size={11} aria-hidden /> {issueTag(bugs)}
+            <span className="mc-tag mc-tag-bug">
+              <Bug aria-hidden /> {issueTag(bugs)}
             </span>
           )}
           {conflicts > 0 && (
-            <span className="fm-tag conflict">
-              <TriangleAlert size={11} aria-hidden /> {conflictTag(conflicts)}
+            <span className="mc-tag mc-tag-conflict">
+              <TriangleAlert aria-hidden /> {conflictTag(conflicts)}
             </span>
           )}
         </span>
@@ -154,7 +149,7 @@ const GapNode = memo(function GapNode({ data }: NodeProps<Node<GapData>>) {
   return (
     <div className={`fm-gap ${fresh ? "is-fresh" : ""} ${selected ? "is-selected" : ""} ${focused ? "is-focus" : ""}`} title={gap.question}>
       <Handle type="target" position={Position.Left} className="fm-handle" isConnectable={false} />
-      <CircleHelp size={15} aria-hidden />
+      <CircleHelp size={16} strokeWidth={2} aria-hidden />
       <span>
         <b>{gap.branch}?</b>
         <small>Nobody said</small>
@@ -264,7 +259,7 @@ function buildGraph(
         },
   )];
   const edges: Edge[] = L.edges.map((e) => {
-    const color = e.kind === "fail" ? "#dc2626" : e.kind === "gap" ? "#d97706" : "#7c8597";
+    const color = e.kind === "fail" ? "var(--bug)" : e.kind === "gap" ? "var(--gap)" : "var(--line-control)";
     return {
       id: e.id,
       source: e.src,
@@ -305,6 +300,7 @@ export interface FlowMapProps {
   focus: FlowFocus | null;
   onCheckGaps: () => void;
   onOpenCard: (cardId: string) => void;
+  stepsLabel?: string;        // replay: "at 02:08"
 }
 
 export function FlowMap(props: FlowMapProps) {
@@ -315,7 +311,8 @@ export function FlowMap(props: FlowMapProps) {
   );
 }
 
-function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onCheckGaps, onOpenCard }: FlowMapProps) {
+function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onCheckGaps, onOpenCard, stepsLabel }: FlowMapProps) {
+  const { theme } = useTheme();
   const [sel, setSel] = useState<Selection>(null);
   const [open, setOpen] = useState(true);
   const [now, setNow] = useState(() => Date.now());
@@ -444,19 +441,18 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
   return (
     <section className={`fm ${open ? "" : "is-collapsed"}`} aria-label="Flow Map">
       <div className="fm-head">
-        <button className="fm-title" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-          <GitBranch size={16} aria-hidden />
-          <span className="section-label">Flow Map</span>
-          <span className="fm-count">
+        <button className="fm-title" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={open ? "Hide the Flow Map" : "Show the Flow Map"}>
+          <span className="lab">Flow Map</span>
+          <span className="mc-tag mc-tag-plain">
             {flow.steps.length} step{flow.steps.length === 1 ? "" : "s"}
+            {stepsLabel ? ` ${stepsLabel}` : ""}
           </span>
           {open ? <ChevronUp size={15} aria-hidden /> : <ChevronDown size={15} aria-hidden />}
         </button>
         {mapping && (
           <span className="fm-busy" title={checking ? "Muse Spark is checking for gaps…" : "Muse Spark is mapping…"}>
             <LoaderCircle size={13} className="spin" aria-hidden />
-            <span className="fm-busy-text long">{checking ? "Muse Spark is checking for gaps…" : "Muse Spark is mapping…"}</span>
-            <span className="fm-busy-text short">{checking ? "Checking gaps…" : "Mapping…"}</span>
+            <span className="fm-busy-text">{checking ? "Muse Spark is checking for gaps…" : "Muse Spark is mapping…"}</span>
           </span>
         )}
         <div className="fm-head-right">
@@ -469,35 +465,34 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
           )}
           {openConflicts.length > 0 && (
             <button
-              className="fm-pill conflict"
+              className="mc-tag mc-tag-conflict"
               onClick={() => {
                 setSel({ kind: "conflicts", id: openConflicts[0].id });
                 const st = openConflicts[0].step;
                 if (st && flow.steps.some((x) => x.id === st)) centerOn(st, true);
               }}
             >
-              <TriangleAlert size={13} aria-hidden /> {openConflicts.length} conflict{openConflicts.length > 1 ? "s" : ""}
+              <TriangleAlert aria-hidden /> {openConflicts.length} conflict{openConflicts.length > 1 ? "s" : ""}
             </button>
           )}
           {openGaps.length > 0 && (
-            <button className="fm-pill gap" onClick={nextGap} title="Jump to the next gap">
-              <CircleHelp size={13} aria-hidden /> {openGaps.length} gap{openGaps.length > 1 ? "s" : ""}
+            <button className="mc-tag mc-tag-gap" onClick={nextGap} title="Jump to the next gap">
+              <CircleHelp aria-hidden /> {openGaps.length} gap{openGaps.length > 1 ? "s" : ""}
             </button>
           )}
           {stats && stats.accepted > 0 && (
             <span
-              className="fm-checked"
+              className="mc-tag mc-tag-ok fm-checked"
               title={`Every box and arrow is backed by a quote checked against the transcript. ${stats.rejected} AI suggestion${
                 stats.rejected === 1 ? " was" : "s were"
               } rejected because the quote wasn’t really said.`}
             >
-              <ShieldCheck size={13} aria-hidden /> {stats.accepted} quote-checked
-              {stats.rejected > 0 && <em> · {stats.rejected} rejected</em>}
+              <ShieldCheck aria-hidden /> {stats.accepted} quote-checked
             </span>
           )}
           {live && (
-            <button className="btn fm-check" onClick={onCheckGaps} disabled={reviewing || status?.state === "thinking"}>
-              {reviewing ? <LoaderCircle size={14} className="spin" aria-hidden /> : <ScanSearch size={14} aria-hidden />}
+            <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={onCheckGaps} disabled={reviewing || status?.state === "thinking"}>
+              {reviewing ? <LoaderCircle className="spin" aria-hidden /> : <ScanSearch strokeWidth={1.75} aria-hidden />}
               {reviewing ? "Checking…" : "Check gaps"}
             </button>
           )}
@@ -512,6 +507,7 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
               edges={edges}
               nodeTypes={NODE_TYPES}
               edgeTypes={EDGE_TYPES}
+              colorMode={theme}
               nodesDraggable={false}
               nodesConnectable={false}
               elementsSelectable={false}
@@ -534,7 +530,7 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
                 }
               }}
             >
-              <Background gap={18} size={1} color="#dfe3ea" />
+              <Background gap={18} size={1} />
               <Controls showInteractive={false} position="bottom-right" />
               {!fits && (
                 <MiniMap
@@ -543,10 +539,9 @@ function FlowMapInner({ flow, stats, status, flash, speakers, live, focus, onChe
                   zoomable
                   ariaLabel="Whole flow"
                   nodeBorderRadius={6}
-                  nodeColor={(n) =>
-                    n.type === "lane" ? "transparent" : n.type === "gap" ? "#f5c26b" : (n.data as StepData).bugs ? "#f08b8b" : (n.data as StepData).fresh ? "#818cf8" : "#cfd4dc"
+                  nodeClassName={(n) =>
+                    n.type === "lane" ? "mm-lane" : n.type === "gap" ? "mm-gap" : (n.data as StepData).bugs ? "mm-bug" : (n.data as StepData).fresh ? "mm-new" : ""
                   }
-                  maskColor="rgba(240, 242, 245, 0.65)"
                   style={{ width: 132, height: 92 }}
                 />
               )}
@@ -633,7 +628,7 @@ function Drawer({
     const out = flow.links.filter((l) => l.src === s.id);
     body = (
       <>
-        <span className={`fm-kind-chip kind-${s.kind}`}>
+        <span className={`mc-tag mc-tag-plain fm-kind-chip kind-${s.kind}`}>
           <KindIcon kind={s.kind} /> {KIND_LABEL[s.kind]}
         </span>
         <h4 className="fm-sec">
@@ -733,8 +728,8 @@ function Drawer({
           <p className="fm-note">Muse Spark found that this branch was never discussed. It’s also in Open questions.</p>
         )}
         {g.card_id && (
-          <button className="btn" onClick={() => onOpenCard(g.card_id!)}>
-            <CircleHelp size={14} aria-hidden /> Open question card
+          <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={() => onOpenCard(g.card_id!)}>
+            <CircleHelp strokeWidth={1.75} aria-hidden /> Open question card
           </button>
         )}
       </>
@@ -755,8 +750,8 @@ function Drawer({
     <aside className="fm-drawer" aria-label={title}>
       <div className="fm-drawer-head">
         <h3>{title}</h3>
-        <button className="icon-btn" onClick={onClose} aria-label="Close">
-          <X size={16} aria-hidden />
+        <button className="mc-ib" onClick={onClose} aria-label="Close">
+          <X size={16} strokeWidth={1.75} aria-hidden />
         </button>
       </div>
       <div className="fm-drawer-body">{body}</div>

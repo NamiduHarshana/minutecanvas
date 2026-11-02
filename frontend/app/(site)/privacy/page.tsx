@@ -27,7 +27,7 @@ export default function Privacy() {
           <ul>
             <li>MinuteCanvas never saves meeting audio.</li>
             <li>After you press Stop, a text replay of the meeting is saved so you can share it. It is deleted after {SITE.keepDays} days, or sooner if you delete it.</li>
-            <li>You don&rsquo;t need an account. If you sign in with Google to see My meetings, we keep your email address and name.</li>
+            <li>You don&rsquo;t need an account. If you sign in with Google to keep your meetings in one list, we keep your email address and name.</li>
             <li>No ads, no analytics, no tracking cookies, and nothing is sold.</li>
           </ul>
         </section>
@@ -74,9 +74,14 @@ export default function Privacy() {
               <td>{SITE.keepDays} days after the meeting, or until you delete it</td>
             </tr>
             <tr>
+              <td>Meeting summary: title, date, length, the gaps, conflicts and bugs found (with their quotes), and how much Meta model work it used</td>
+              <td>Your Dashboard, Findings and Usage pages</td>
+              <td>Deleted together with the replay</td>
+            </tr>
+            <tr>
               <td>Google account email and name (only if you sign in)</td>
-              <td>To show your meetings under My meetings</td>
-              <td>Until you choose &ldquo;Delete all my data&rdquo;, or ask us</td>
+              <td>To show your meetings on your Dashboard, Meetings, Findings and Usage pages</td>
+              <td>Until you choose &ldquo;Delete everything&rdquo; in Account, or ask us</td>
             </tr>
             <tr>
               <td>IP address</td>
@@ -104,11 +109,11 @@ export default function Privacy() {
         <h2>Deleting your data</h2>
         <ul>
           <li>
-            <b>One meeting:</b> use Delete replay in the meeting (Replay menu), on the replay page in the browser you made it on, or in My meetings. The
+            <b>One meeting:</b> use Delete replay in the meeting (Replay menu), on the replay page in the browser you made it on, or from Meetings (⋯ → Delete). The
             transcript, board, Flow Map and pictures are removed and the link stops working for everyone.
           </li>
           <li>
-            <b>Everything:</b> in My meetings, choose Delete all my data. Every replay in your account and your account&rsquo;s list are removed.
+            <b>Everything:</b> in Account, choose Delete everything. Every replay in your account and your account&rsquo;s list are removed.
           </li>
           <li>
             <b>Automatically:</b> every replay is deleted {SITE.keepDays} days after the meeting. The public demo meeting on this site is the only exception.
@@ -118,7 +123,7 @@ export default function Privacy() {
         <h2>Your browser</h2>
         <p>
           MinuteCanvas uses your browser&rsquo;s local storage, not cookies, to remember your setup choices (audio source and project words), the meetings you
-          made on this browser together with the key that lets you delete them, and your sign-in. You can clear it at any time in your browser settings.
+          made on this browser (with their summaries, and the key that lets you delete them), your theme and your sign-in. You can clear it at any time in your browser settings.
           Signing out also removes the meeting list from the browser.
         </p>
 
@@ -128,10 +133,10 @@ export default function Privacy() {
             <b>Meta (Meta Model API):</b> transcription, the board, the Flow Map and the card pictures.
           </li>
           <li>
-            <b>Google Cloud (United States):</b> hosting, and storage of the replays and the My meetings lists.
+            <b>Google Cloud (United States):</b> hosting, and storage of the replays and the signed-in meeting lists.
           </li>
           <li>
-            <b>Google sign-in:</b> only when you choose to sign in, on the My meetings page.
+            <b>Google sign-in:</b> only when you choose to sign in, on the Account page.
           </li>
           <li>
             <b>YouTube (youtube-nocookie.com):</b> only if you press play on the demo video. Nothing is loaded from YouTube before that.

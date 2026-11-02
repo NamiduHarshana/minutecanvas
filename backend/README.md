@@ -80,7 +80,7 @@ Every message sent to the browser (except `hello`, `ping`, `voice_status`, `noti
 - `GET /api/replays/{id}/images/{img}` → card image
 The replay page feeds the messages through the same reducer as the live app, so the transcript, board and Flow Map appear in the same order and at the same meeting time.
 - `DELETE /api/replays/{id}` with `X-Replay-Key: <owner key>` (the browser that made the meeting) or `Authorization: Bearer <login token>` (the signed-in owner) → removes everything of that replay.
-- Kept `REPLAY_KEEP_DAYS` (30) days: older replays are refused on read and removed by a sweep every 6 h; ids in `PINNED_REPLAYS` (the public demo) are kept. `replays/<id>/meta.json` holds the creation time, the sha256 of the owner key, the owner account and the dashboard row.
+- Kept `REPLAY_KEEP_DAYS` (30) days: older replays are refused on read and removed by a sweep every 6 h; ids in `PINNED_REPLAYS` (the public demo) are kept. `replays/<id>/meta.json` holds the creation time, the sha256 of the owner key, the owner account and the dashboard row. v6.19: the row also has `bugs`, `answered`, `usage {voice_s, spark_calls, tool_calls, images}` and `findings [{id, kind gap|answered|conflict|bug, text, branch, step, part, t, answer, settled, fixed, quotes [{t, speaker, text}]}]`; the replay file (`events.json.gz`) also carries `findings`, `usage` and `timeline {speakers [{speaker,t,t_end}], parts [{part,t,t_end}]}`.
 
 ## My meetings (Google sign-in, optional)
 Starting a meeting never needs an account. `GOOGLE_CLIENT_ID` + `AUTH_SECRET` turn on sign-in for the My meetings page:

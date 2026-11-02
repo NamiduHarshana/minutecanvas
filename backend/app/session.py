@@ -53,6 +53,11 @@ FLOW_MAX_CALLS_PER_TURN = 20
 REVIEW_CONTEXT_LINES = 80   # gap review / final pass: recent lines shown for context
 HINT_LOOKBACK = 300         # older lines compared with the new ones for number changes
 FLOW_WAIT_S = 60.0         # cards wait at most this long for the Flow round of the same tick (it may take a few turns)
+# v6.19: saved with the replay for the Dashboard / Findings / Usage pages and the replay timeline
+MAX_FINDINGS = 80           # findings kept per meeting (a 3-hour meeting stays far below)
+MAX_TIMELINE = 2000         # speaker / part blocks kept per lane
+PART_JOIN_S = 60.0          # two quotes of the same part this close = one block on the Parts lane
+PART_TAIL_S = 10.0          # a part block runs a little past its last quote
 _HAS_NUMBER = re.compile(r"\d|\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|"
                          r"forty|fifty|hundred|thousand)\b", re.I)
 
@@ -103,6 +108,7 @@ class Session:
         self.speaker_names: dict[str, str] = {}
         self.spark_done_idx = 0
         self.spark_calls = 0
+        self.spark_requests = 0          # every Muse Spark request (board, Flow agent turns, checks, report): Usage page
         self.spark_lock = asyncio.Lock()
         self.images: dict[str, tuple[bytes, str]] = {}
         self.images_made = 0
@@ -276,7 +282,9 @@ class Session:
             await asyncio.gather(*(put_image(i, raw, mime) for i, (raw, mime) in list(self.images.items())))
             data = self.recorder.payload(self.id, rid, self.board.title or (self.report or {}).get("title"),
                                          self.created_wall.isoformat(), self.meeting_t,
-                                         {k: self.speaker_name(k) for k in sorted({x["speaker"] for x in self.transcript})})
+                                         {k: self.speaker_name(k) for k in sorted({x["speaker"] for x in self.transcript})},
+                                         {"timeline": self.timeline(), "findings": self.findings(),
+                                          "usage": self.usage_info()})
             await self.store.put(events_key(rid), data, "application/gzip")
             self.replay_id = rid
             if self.library is not None:
@@ -293,12 +301,93 @@ class Session:
         await self.send({"type": "replay_ready", "replay_id": rid, "replay_key": key, "info": self.replay_info()})
 
     def replay_info(self) -> dict:
-        """Dashboard row: title, date, length, open gaps / conflicts at the end."""
+        """Dashboard row: title, date, length, open gaps / conflicts at the end.
+        v6.19: + bug / answered counts, Meta usage and the findings list (Dashboard, Findings and Usage pages)."""
         gaps = sum(1 for g in self.flow.gaps.values() if not g.resolved and not g.dismissed)
         conflicts = sum(1 for c in self.flow.contradictions.values() if not c.resolved)
+        found = self.findings()
         return {"title": self.board.title or (self.report or {}).get("title") or None,
                 "date": self.created_wall.isoformat(), "duration_s": round(self.meeting_t, 1),
-                "gaps": gaps, "conflicts": conflicts}
+                "gaps": gaps, "conflicts": conflicts,
+                "bugs": sum(1 for f in found if f["kind"] == "bug"),
+                "answered": sum(1 for f in found if f["kind"] == "answered"),
+                "usage": self.usage_info(), "findings": found}
+
+    def usage_info(self) -> dict:
+        """Meta model work for this meeting: transcribed seconds, Muse Spark requests, Flow tool calls checked
+        against the transcript (accepted + rejected), Muse Image pictures."""
+        return {"voice_s": round(self.meeting_t, 1), "spark_calls": self.spark_requests,
+                "tool_calls": int(self.flow_stats["accepted"] + self.flow_stats["rejected"]),
+                "images": len(self.images)}
+
+    def findings(self) -> list[dict]:
+        """Every gap, answered gap, conflict and bug of the Flow Map, oldest first, each with its checked quotes.
+        Only what the meeting produced: a gap's own question is the follow-up to ask (nothing is generated here)."""
+        steps = self.flow.steps
+
+        def q(e) -> dict:
+            return {"t": round(float(e.t), 1), "speaker": self.speaker_name(e.speaker), "text": clean_text(e.quote, 300)}
+
+        def where(step_id: str | None) -> tuple[str | None, str | None]:
+            s = steps.get(step_id) if step_id else None
+            return (s.label, s.part) if s else (None, None)
+
+        out: list[dict] = []
+        for g in self.flow.gaps.values():
+            if g.dismissed:
+                continue
+            label, part = where(g.step)
+            quotes = [q(e) for e in g.evidence[:3]] + ([q(g.resolved_by)] if g.resolved and g.resolved_by else [])
+            out.append({"id": g.id, "kind": "answered" if g.resolved else "gap", "text": clean_text(g.question, 200),
+                        "branch": clean_text(g.branch, 80), "step": label, "part": part, "t": round(g.t, 1),
+                        "answer": clean_text(g.answer, 300) or None, "quotes": quotes})
+        for c in self.flow.contradictions.values():
+            label, part = where(c.step)
+            quotes = [q(c.a), q(c.b)] + ([q(c.resolved_by)] if c.resolved and c.resolved_by else [])
+            out.append({"id": c.id, "kind": "conflict", "text": clean_text(c.note, 200), "step": label, "part": part,
+                        "t": round(c.t, 1), "settled": bool(c.resolved), "answer": clean_text(c.answer, 300) or None,
+                        "quotes": quotes})
+        for b in self.flow.bugs.values():
+            label, part = where(b.step)
+            quotes = [q(e) for e in b.evidence[:3]] + ([q(b.fix)] if b.fixed and b.fix else [])
+            out.append({"id": b.id, "kind": "bug", "text": clean_text(b.text, 200), "step": label, "part": part,
+                        "t": round(b.t, 1), "fixed": bool(b.fixed), "quotes": quotes})
+        out.sort(key=lambda f: f["t"])
+        return out[:MAX_FINDINGS]
+
+    def timeline(self) -> dict:
+        """Replay timeline lanes: who spoke when, and when each part of the product was talked about."""
+        lines = self.transcript
+        speakers: list[dict] = []
+        for i, ln in enumerate(lines):
+            start = float(ln["t"])
+            end = float(ln.get("t_end") or start)
+            if i + 1 < len(lines):
+                end = min(end, float(lines[i + 1]["t"]))     # t_end is when the line arrived, which can be late
+            end = max(end, start + 1.0)
+            last = speakers[-1] if speakers else None
+            if last and last["speaker"] == ln["speaker"] and start - last["t_end"] <= 2.0:
+                last["t_end"] = round(max(last["t_end"], end), 1)
+            else:
+                speakers.append({"speaker": ln["speaker"], "t": round(start, 1), "t_end": round(end, 1)})
+        times: dict[str, list[float]] = {}
+        for s in self.flow.steps.values():
+            if s.part:
+                times.setdefault(s.part, []).extend(float(e.t) for e in s.evidence)
+        parts: list[dict] = []
+        for part, ts in times.items():
+            seg: list[float] | None = None
+            for t in sorted(ts):
+                if seg and t - seg[1] <= PART_JOIN_S:
+                    seg[1] = t
+                    continue
+                if seg:
+                    parts.append({"part": part, "t": round(seg[0], 1), "t_end": round(seg[1] + PART_TAIL_S, 1)})
+                seg = [t, t]
+            if seg:
+                parts.append({"part": part, "t": round(seg[0], 1), "t_end": round(seg[1] + PART_TAIL_S, 1)})
+        parts.sort(key=lambda p: p["t"])
+        return {"speakers": speakers[:MAX_TIMELINE], "parts": parts[:MAX_TIMELINE]}
 
     # ---------------- transcript ----------------
     async def _on_voice(self, kind: str, data: dict):
@@ -451,6 +540,7 @@ class Session:
             payload = {"gap": g.question, "step": step.label, "flagged_at": fmt_t(g.t),
                        "lines_about_the_step": about, "lines_said_after_it_was_flagged": since}
             try:
+                self.spark_requests += 1
                 out = await self.meta.spark_json(GAP_STATUS_SYSTEM, json.dumps(payload, ensure_ascii=False),
                                                  "gap_status", GAP_STATUS_SCHEMA)
             except Exception as e:  # noqa: BLE001 - keep the gap as it is
@@ -562,6 +652,7 @@ class Session:
             await self.send({"type": "spark_status", "state": "thinking"})
             t0 = time.monotonic()
             try:
+                self.spark_requests += 1
                 ops = await self.meta.spark_json(SPARK_SYSTEM, json.dumps(payload, ensure_ascii=False), "board_ops", SPARK_SCHEMA)
             except Exception as e:  # noqa: BLE001 - keep the lines, retry next tick
                 log.warning("spark failed: %s", e)
@@ -835,6 +926,7 @@ class Session:
                    "statement_b_with_lines_before": ctx(b)}
         self.conflict_checks += 1
         try:
+            self.spark_requests += 1
             out = await self.meta.spark_json(VERIFY_CONFLICT_SYSTEM, json.dumps(payload, ensure_ascii=False),
                                              "verify_conflict", VERIFY_CONFLICT_SCHEMA)
         except Exception as e:  # noqa: BLE001
@@ -938,6 +1030,7 @@ class Session:
     async def _verify_flow(self, payload: dict) -> dict | None:
         self.flow_checks += 1
         try:
+            self.spark_requests += 1
             out = await self.meta.spark_json(VERIFY_FLOW_SYSTEM, json.dumps(payload, ensure_ascii=False),
                                              "verify_flow", VERIFY_FLOW_SCHEMA)
         except Exception as e:  # noqa: BLE001
@@ -956,6 +1049,7 @@ class Session:
                 acc.cut = True                 # out of time with the agent still working
                 break
             try:
+                self.spark_requests += 1
                 msg = await self.meta.spark_tools(messages, FLOW_TOOLS)
             except ToolsUnsupported:
                 raise
@@ -1048,6 +1142,7 @@ class Session:
                 acc.cut = True
                 break
             try:
+                self.spark_requests += 1
                 out = await self.meta.spark_json(FLOW_SYSTEM + FLOW_JSON_NOTE, user, "flow_calls",
                                                  FLOW_JSON_SCHEMA, history)
             except Exception:
@@ -1143,6 +1238,7 @@ class Session:
             if len(full) > 600:     # keep the request small for very long meetings
                 full = full[:100] + ["[...]"] + full[-500:]
             try:
+                self.spark_requests += 1
                 out = await self.meta.spark_json(
                     SUMMARY_SYSTEM,
                     json.dumps({"board": self.board.for_spark(), "transcript": full,

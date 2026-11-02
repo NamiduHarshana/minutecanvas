@@ -1,11 +1,17 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Download, ExternalLink, FileImage, FileText, Link2, Pause, Play, Presentation, Square, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, Download, ExternalLink, FileImage, FileText, Link2, Pause, Play, Presentation, Square, Trash2 } from "lucide-react";
 import type { ConnStatus } from "@/core/client";
 import type { ServerState } from "@/core/types";
 import { fmtTime } from "@/core/store";
-import { Logo } from "./Logo";
 
+export interface ReplayActions {
+  href: string;
+  onCopy: () => void;
+  onDelete: (() => void) | null;     // only the browser that made the meeting (owner key)
+}
+
+/** Live meeting top bar: ← Dashboard, title, recording clock, source, connection, Pause / Stop (then Replay, Export, Report). */
 export function TopBar({
   title,
   serverState,
@@ -40,59 +46,52 @@ export function TopBar({
   replay?: ReplayActions | null;
 }) {
   const live = serverState === "recording" || serverState === "paused";
+  const done = serverState === "done";
   return (
     <header className="topbar">
-      <div className="tb-left">
-        <Logo small />
-        <span className="tb-sep" />
-        <h1 className="tb-title" title={title || ""}>
-          {title || (serverState === "created" ? "Starting…" : "Untitled meeting")}
-        </h1>
-      </div>
-      <div className="tb-right">
-        <RecTimer state={serverState} clock={clock} />
-        {sourceLabel && live && (
-          <span className="tb-source">
-            <LevelMeter level={level} paused={serverState === "paused"} />
-            {sourceLabel}
-          </span>
-        )}
-        <ConnBadge conn={conn} voice={voice} done={serverState === "done"} />
-        {live && (
-          <>
-            {serverState === "paused" ? (
-              <button className="btn" onClick={onResume}>
-                <Play size={15} aria-hidden /> Resume
-              </button>
-            ) : (
-              <button className="btn" onClick={onPause}>
-                <Pause size={15} aria-hidden /> Pause
-              </button>
-            )}
-            <button className="btn btn-danger" onClick={onStop}>
-              <Square size={13} fill="currentColor" aria-hidden /> Stop
+      <a className="back" href="/dashboard">
+        <ArrowLeft size={15} strokeWidth={2} aria-hidden /> Dashboard
+      </a>
+      <h1 className="ttl" title={title || ""}>
+        {title || (serverState === "created" ? "Starting…" : "Untitled meeting")}
+      </h1>
+      <span className="grow" />
+      <RecTimer state={serverState} clock={clock} />
+      {sourceLabel && live && (
+        <span className="mc-tag mc-tag-plain">
+          <LevelMeter level={level} paused={serverState === "paused"} />
+          {sourceLabel}
+        </span>
+      )}
+      <ConnTag conn={conn} voice={voice} done={done} />
+      {live && (
+        <>
+          {serverState === "paused" ? (
+            <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={onResume}>
+              <Play strokeWidth={1.75} aria-hidden /> Resume
             </button>
-          </>
-        )}
-        {replay && <ReplayMenu replay={replay} />}
-        {hasReport && (
-          <button className="btn btn-primary" onClick={onShowReport}>
-            <Presentation size={15} aria-hidden /> Report
+          ) : (
+            <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={onPause}>
+              <Pause strokeWidth={1.75} aria-hidden /> Pause
+            </button>
+          )}
+          <button className="mc-btn mc-btn-stop mc-btn-sm" onClick={onStop}>
+            <Square size={12} fill="currentColor" strokeWidth={0} aria-hidden /> Stop
           </button>
-        )}
-        <ExportMenu disabled={exporting} onExport={onExport} />
-      </div>
+        </>
+      )}
+      {replay && <ReplayMenu replay={replay} />}
+      {(done || hasReport) && <ExportMenu disabled={exporting} onExport={onExport} />}
+      {hasReport && (
+        <button className="mc-btn mc-btn-primary mc-btn-sm" onClick={onShowReport}>
+          <Presentation strokeWidth={1.75} aria-hidden /> Report
+        </button>
+      )}
     </header>
   );
 }
 
-export interface ReplayActions {
-  href: string;
-  onCopy: () => void;
-  onDelete: (() => void) | null;     // only the browser that made the meeting (owner key)
-}
-
-function useMenu() {
+export function useMenu() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -115,11 +114,11 @@ function ReplayMenu({ replay }: { replay: ReplayActions }) {
   const { open, setOpen, ref } = useMenu();
   return (
     <div className="menu-wrap" ref={ref}>
-      <button className="btn" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
-        <Link2 size={15} aria-hidden /> Replay <ChevronDown size={14} aria-hidden />
+      <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
+        <Link2 strokeWidth={1.75} aria-hidden /> Replay <ChevronDown strokeWidth={1.75} aria-hidden />
       </button>
       {open && (
-        <div className="menu" role="menu">
+        <div className="mc-menu" role="menu">
           <button
             role="menuitem"
             onClick={() => {
@@ -127,10 +126,10 @@ function ReplayMenu({ replay }: { replay: ReplayActions }) {
               replay.onCopy();
             }}
           >
-            <Link2 size={15} aria-hidden /> Copy replay link
+            <Link2 size={16} strokeWidth={1.75} aria-hidden /> Copy replay link
           </button>
           <a role="menuitem" href={replay.href} target="_blank" rel="noopener" onClick={() => setOpen(false)}>
-            <ExternalLink size={15} aria-hidden /> Open replay
+            <ExternalLink size={16} strokeWidth={1.75} aria-hidden /> Open replay
           </a>
           {replay.onDelete && (
             <button
@@ -141,7 +140,7 @@ function ReplayMenu({ replay }: { replay: ReplayActions }) {
                 replay.onDelete?.();
               }}
             >
-              <Trash2 size={15} aria-hidden /> Delete replay
+              <Trash2 size={16} strokeWidth={1.75} aria-hidden /> Delete replay
             </button>
           )}
         </div>
@@ -159,9 +158,9 @@ function RecTimer({ state, clock }: { state: ServerState; clock: () => number })
   const label =
     state === "recording" ? "Recording" : state === "paused" ? "Paused" : state === "stopping" ? "Finishing" : state === "done" ? "Ended" : "Starting";
   return (
-    <span className={`rec rec-${state}`}>
-      <span className="rec-dot" />
-      {label} <b>{fmtTime(t)}</b>
+    <span className={`rec rec-${state}`} role="status">
+      <i aria-hidden />
+      {label} <span className="mc-time">{fmtTime(t)}</span>
     </span>
   );
 }
@@ -186,55 +185,34 @@ function LevelMeter({ level, paused }: { level: () => number; paused: boolean })
   );
 }
 
-function ConnBadge({ conn, voice, done }: { conn: ConnStatus; voice: string; done: boolean }) {
+function ConnTag({ conn, voice, done }: { conn: ConnStatus; voice: string; done: boolean }) {
   if (done) return null;
-  let cls = "ok";
+  let cls = "mc-tag-ok";
+  let wait = false;
   let text = "Connected";
-  if (conn === "connecting") {
-    cls = "wait";
-    text = "Connecting…";
-  } else if (conn === "reconnecting") {
-    cls = "wait";
-    text = "Reconnecting…";
-  } else if (conn === "offline") {
-    cls = "bad";
-    text = "Offline — keeping audio";
-  } else if (conn === "closed") {
-    cls = "bad";
-    text = "Disconnected";
-  } else if (voice === "reconnecting" || voice === "connecting") {
-    cls = "wait";
-    text = "Transcriber reconnecting…";
-  } else if (voice === "failed") {
-    cls = "bad";
-    text = "Transcriber failed";
-  }
+  if (conn === "connecting") (cls = "mc-tag-plain"), (wait = true), (text = "Connecting…");
+  else if (conn === "reconnecting") (cls = "mc-tag-plain"), (wait = true), (text = "Reconnecting…");
+  else if (conn === "offline") (cls = "mc-tag-bug"), (text = "Offline — keeping audio");
+  else if (conn === "closed") (cls = "mc-tag-bug"), (text = "Disconnected");
+  else if (voice === "reconnecting" || voice === "connecting") (cls = "mc-tag-plain"), (wait = true), (text = "Transcriber reconnecting…");
+  else if (voice === "failed") (cls = "mc-tag-bug"), (text = "Transcriber failed");
   return (
-    <span className={`conn conn-${cls}`} role="status">
-      <span className="conn-dot" />
+    <span className={`mc-tag ${cls} ${wait ? "conn-wait" : ""}`} role="status">
+      <span className="conn-dot" aria-hidden />
       {text}
     </span>
   );
 }
 
 function ExportMenu({ disabled, onExport }: { disabled: boolean; onExport: (k: "png" | "pdf") => void }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [open]);
+  const { open, setOpen, ref } = useMenu();
   return (
     <div className="menu-wrap" ref={ref}>
-      <button className="btn" onClick={() => setOpen((o) => !o)} disabled={disabled} aria-haspopup="menu" aria-expanded={open}>
-        <Download size={15} aria-hidden /> {disabled ? "Exporting…" : "Export"} <ChevronDown size={14} aria-hidden />
+      <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={() => setOpen((o) => !o)} disabled={disabled} aria-haspopup="menu" aria-expanded={open}>
+        <Download strokeWidth={1.75} aria-hidden /> {disabled ? "Exporting…" : "Export"} <ChevronDown strokeWidth={1.75} aria-hidden />
       </button>
       {open && (
-        <div className="menu" role="menu">
+        <div className="mc-menu" role="menu">
           <button
             role="menuitem"
             onClick={() => {
@@ -242,7 +220,7 @@ function ExportMenu({ disabled, onExport }: { disabled: boolean; onExport: (k: "
               onExport("png");
             }}
           >
-            <FileImage size={15} aria-hidden /> Board as PNG
+            <FileImage size={16} strokeWidth={1.75} aria-hidden /> Board as PNG
           </button>
           <button
             role="menuitem"
@@ -251,7 +229,7 @@ function ExportMenu({ disabled, onExport }: { disabled: boolean; onExport: (k: "
               onExport("pdf");
             }}
           >
-            <FileText size={15} aria-hidden /> Board as PDF
+            <FileText size={16} strokeWidth={1.75} aria-hidden /> Board as PDF
           </button>
         </div>
       )}

@@ -1,59 +1,60 @@
-import { Logo } from "../Logo";
-import { SITE } from "@/core/site";
+import { Mark } from "../Logo";
+import { SITE, demoReplayHref } from "@/core/site";
 
 export function SiteHeader() {
   return (
-    <header className="s-head">
-      <div className="s-wrap s-head-in">
-        <a href="/" className="s-home" aria-label="MinuteCanvas home">
-          <Logo small />
+    <header className="snav-bar">
+      <nav className="snav" aria-label="Main">
+        <a href="/" className="mc-brand" aria-label="MinuteCanvas home">
+          <Mark />
+          MinuteCanvas
         </a>
-        <nav className="s-nav" aria-label="Main">
-          <a href="/#how" className="s-nav-hide">
-            How it works
-          </a>
-          <a href="/#faq" className="s-nav-hide">
-            FAQ
-          </a>
-          <a href="/meetings">My meetings</a>
-          <a href="/meet" className="s-btn s-btn-ink s-btn-sm">
-            Start a meeting
-          </a>
-        </nav>
-      </div>
+        <a href="/#how" className="hide-s">
+          How it works
+        </a>
+        <a href="/#features" className="hide-s">
+          Features
+        </a>
+        <a href="/#privacy" className="hide-s">
+          Privacy
+        </a>
+        <a href="/#faq" className="hide-s">
+          FAQ
+        </a>
+        <span className="grow" />
+        <a href="/dashboard">Dashboard</a>
+        <a className="mc-btn mc-btn-primary" href="/meet">
+          Start a meeting
+        </a>
+      </nav>
     </header>
   );
 }
 
 export function SiteFooter() {
+  const demo = demoReplayHref();
   return (
-    <footer className="s-foot">
-      <div className="s-wrap s-foot-in">
-        <div className="s-foot-brand">
-          <Logo small />
-          <p>A live visual notetaker for meetings, built with Meta Muse models for the Meta Global AI Developer Hackathon 2026.</p>
+    <footer className="foot">
+      <div className="foot-brand">
+        <div className="mc-brand">
+          <Mark />
+          MinuteCanvas
         </div>
-        <ul className="s-foot-links">
-          <li>
-            <a href="/meet">Start a meeting</a>
-          </li>
-          <li>
-            <a href="/meetings">My meetings</a>
-          </li>
-          <li>
-            <a href="/privacy">Privacy policy</a>
-          </li>
-          <li>
-            <a href={SITE.github} target="_blank" rel="noopener">
-              Source code on GitHub (MIT)
-            </a>
-          </li>
-          {SITE.contactEmail && (
-            <li>
-              <a href={`mailto:${SITE.contactEmail}`}>{SITE.contactEmail}</a>
-            </li>
-          )}
-        </ul>
+        <p>A live visual notetaker built with Meta Muse models for the Meta Global AI Developer Hackathon 2026.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <a href="/meet">Start a meeting</a>
+        <a href="/dashboard">Dashboard</a>
+        {demo && <a href={demo}>Demo replay</a>}
+      </div>
+      <div>
+        <h4>About</h4>
+        <a href="/privacy">Privacy policy</a>
+        <a href={SITE.github} target="_blank" rel="noopener">
+          Source on GitHub (MIT)
+        </a>
+        {SITE.contactEmail && <a href={`mailto:${SITE.contactEmail}`}>{SITE.contactEmail}</a>}
       </div>
     </footer>
   );

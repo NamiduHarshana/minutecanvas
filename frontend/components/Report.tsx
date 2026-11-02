@@ -9,7 +9,17 @@ import { SlideView, allCards, buildSlides } from "./Slides";
 const W = 1280;
 const H = 720;
 
-export function Report({ report, onBack, onNew }: { report: ReportT; onBack: () => void; onNew: () => void }) {
+export function Report({
+  report,
+  onBack,
+  onNew,
+  backLabel = "Board",
+}: {
+  report: ReportT;
+  onBack: () => void;
+  onNew: () => void;
+  backLabel?: string;
+}) {
   const slides = useMemo(() => buildSlides(report), [report]);
   const [i, setI] = useState(0);
   const [scale, setScale] = useState(0.5);
@@ -70,23 +80,22 @@ export function Report({ report, onBack, onNew }: { report: ReportT; onBack: () 
 
   return (
     <div className="report">
-      <header className="report-bar">
-        <button className="btn" onClick={onBack}>
-          <ArrowLeft size={15} aria-hidden /> Board
+      <header className="topbar">
+        <button className="back" onClick={onBack}>
+          <ArrowLeft size={15} strokeWidth={2} aria-hidden /> {backLabel}
         </button>
-        <h1 className="tb-title">{report.title}</h1>
-        <div className="tb-right">
-          <button className="btn btn-primary" onClick={exportPdf} disabled={!!exporting}>
-            <FileDown size={15} aria-hidden /> {exporting || "Export PDF"}
-          </button>
-          <button className="btn" onClick={onNew}>
-            <Plus size={15} aria-hidden /> New meeting
-          </button>
-        </div>
+        <h1 className="ttl">{report.title}</h1>
+        <span className="mc-tag mc-tag-brand">Report</span>
+        <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={onNew}>
+          <Plus strokeWidth={1.75} aria-hidden /> New meeting
+        </button>
+        <button className="mc-btn mc-btn-primary mc-btn-sm" onClick={exportPdf} disabled={!!exporting}>
+          <FileDown strokeWidth={1.75} aria-hidden /> {exporting || "Export PDF"}
+        </button>
       </header>
 
-      <div className="stage" ref={stage}>
-        <div className="slide-frame" style={{ width: W * scale, height: H * scale }}>
+      <div className="slides-stage" ref={stage}>
+        <div className="slide-frame" data-theme="light" style={{ width: W * scale, height: H * scale }}>
           <div key={i} className="slide-anim" style={{ transform: `scale(${scale})`, transformOrigin: "0 0", width: W, height: H }}>
             <SlideView slide={slides[i]} report={report} />
           </div>
@@ -94,8 +103,8 @@ export function Report({ report, onBack, onNew }: { report: ReportT; onBack: () 
       </div>
 
       <nav className="slide-nav">
-        <button className="icon-btn big" onClick={() => go(-1)} disabled={i === 0} aria-label="Previous slide">
-          <ChevronLeft size={22} aria-hidden />
+        <button className="mc-ib" onClick={() => go(-1)} disabled={i === 0} aria-label="Previous slide">
+          <ChevronLeft size={18} aria-hidden />
         </button>
         <div className="dots">
           {slides.map((_, k) => (
@@ -105,13 +114,13 @@ export function Report({ report, onBack, onNew }: { report: ReportT; onBack: () 
         <span className="slide-count">
           {i + 1} / {slides.length}
         </span>
-        <button className="icon-btn big" onClick={() => go(1)} disabled={i === slides.length - 1} aria-label="Next slide">
-          <ChevronRight size={22} aria-hidden />
+        <button className="mc-ib" onClick={() => go(1)} disabled={i === slides.length - 1} aria-label="Next slide">
+          <ChevronRight size={18} aria-hidden />
         </button>
       </nav>
 
       {exporting && (
-        <div className="offscreen" aria-hidden>
+        <div className="offscreen" aria-hidden data-theme="light">
           <div ref={exportBox}>
             {slides.map((s, k) => (
               <SlideView key={k} slide={s} report={report} />

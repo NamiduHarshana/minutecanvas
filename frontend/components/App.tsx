@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CircleHelp, Link2, LoaderCircle, Mic, MonitorSpeaker, PanelRightOpen, Presentation, TriangleAlert, X } from "lucide-react";
+import { Link2, LoaderCircle, Mic, MonitorSpeaker, Presentation, X } from "lucide-react";
 import type { AudioSource, Card, ClientMsg, FlowEvent } from "@/core/types";
 import { AudioCapture, CaptureError, tabAudioSupported } from "@/core/audio";
 import { ApiError, MeetingClient, StoredSession, checkStored, clearStored, createSession, loadStored } from "@/core/client";
@@ -19,9 +19,11 @@ import { Report } from "./Report";
 import { ExportSheet } from "./ExportSheet";
 import { ChainStrip } from "./ChainStrip";
 import { FlowMap, FlowFocus } from "./FlowMap";
+import { AppShell } from "./AppShell";
+import { CountTag } from "./kit";
 
 type EditFields = Extract<ClientMsg, { type: "card_edit" }>["fields"];
-const SOURCE_LABEL: Record<AudioSource, string> = { mic: "Mic", mic_tab: "Mic + Tab" };
+const SOURCE_LABEL: Record<AudioSource, string> = { mic: "Mic", mic_tab: "Mic + tab" };
 const STEPS: { key: string; label: string }[] = [
   { key: "transcript", label: "Finishing the transcript" },
   { key: "cards", label: "Final pass with Muse Spark" },
@@ -40,7 +42,6 @@ export default function App() {
   const [needMic, setNeedMic] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
   const [stored, setStored] = useState<StoredSession | null>(null);
-  const [showSidebar, setShowSidebar] = useState(true);
   const [modal, setModal] = useState<{ id: string; edit: boolean } | null>(null);
   const [exporting, setExporting] = useState<"png" | "pdf" | null>(null);
   const [flowFocus, setFlowFocus] = useState<FlowFocus | null>(null);
@@ -294,7 +295,11 @@ export default function App() {
 
   // ---------------- render ----------------
   if (phase === "setup") {
-    return <Setup busy={busy} error={setupError} onStart={onStart} canRejoin={!!stored} onRejoin={onRejoin} />;
+    return (
+      <AppShell active="newm">
+        <Setup busy={busy} error={setupError} onStart={onStart} canRejoin={!!stored} onRejoin={onRejoin} />
+      </AppShell>
+    );
   }
 
   if (view === "report" && state.report) {
@@ -302,7 +307,7 @@ export default function App() {
   }
 
   return (
-    <div className={`app ${showSidebar ? "" : "no-sidebar"}`}>
+    <div className="live">
       <TopBar
         title={state.title}
         serverState={state.serverState}
@@ -324,50 +329,52 @@ export default function App() {
             : null
         }
       />
-      <main className="main">
-        {state.serverState === "paused" && <div className="paused-bar">Paused — nothing is being transcribed. Press Resume to continue.</div>}
-        {state.serverState === "stopping" && <FinishingBar step={state.stopStep} />}
-        {reportReady && state.report && view === "board" && (
-          <ReportBanner
-            gaps={state.flow ? state.flow.gaps.filter((g) => !g.resolved && !g.dismissed).length : 0}
-            conflicts={state.flow ? state.flow.contradictions.filter((c) => !c.resolved).length : 0}
-            onOpen={() => setView("report")}
-            onCopyReplay={state.replayId ? copyReplay : null}
-            onClose={() => setReportReady(false)}
-          />
-        )}
-        {(live || state.serverState === "stopping") && <ChainStrip state={state} />}
-        {state.flow && state.flow.steps.length > 0 && (
-          <FlowMap
-            flow={state.flow}
-            stats={state.flowStats}
-            status={state.flowStatus}
-            flash={state.flowFlash}
-            speakers={state.speakers}
-            live={live}
-            focus={flowFocus}
-            onCheckGaps={() => send({ type: "gap_review" })}
-            onOpenCard={(id) => setModal({ id, edit: false })}
-          />
-        )}
-        <Board state={state} cards={cards} actions={actions} readOnly={readOnly} />
-      </main>
-      {showSidebar ? (
+      <div className="work">
+        <main className="stage" id="content">
+          {state.serverState === "paused" && (
+            <div className="banner paused" role="status">
+              <span className="b-text">
+                <b>Paused</b>
+                <span className="b-found">Nothing is being transcribed. Press Resume to continue.</span>
+              </span>
+            </div>
+          )}
+          {state.serverState === "stopping" && <FinishingBar step={state.stopStep} />}
+          {reportReady && state.report && view === "board" && (
+            <ReportBanner
+              gaps={state.flow ? state.flow.gaps.filter((g) => !g.resolved && !g.dismissed).length : 0}
+              conflicts={state.flow ? state.flow.contradictions.filter((c) => !c.resolved).length : 0}
+              onOpen={() => setView("report")}
+              onCopyReplay={state.replayId ? copyReplay : null}
+              onClose={() => setReportReady(false)}
+            />
+          )}
+          {(live || state.serverState === "stopping") && <ChainStrip state={state} />}
+          {state.flow && state.flow.steps.length > 0 && (
+            <FlowMap
+              flow={state.flow}
+              stats={state.flowStats}
+              status={state.flowStatus}
+              flash={state.flowFlash}
+              speakers={state.speakers}
+              live={live}
+              focus={flowFocus}
+              onCheckGaps={() => send({ type: "gap_review" })}
+              onOpenCard={(id) => setModal({ id, edit: false })}
+            />
+          )}
+          <Board state={state} cards={cards} actions={actions} readOnly={readOnly} />
+        </main>
         <Sidebar
           state={state}
           questions={questions}
           readOnly={readOnly}
-          onHide={() => setShowSidebar(false)}
           onRename={(label, name) => send({ type: "rename_speaker", label, name })}
           onOpenCard={(id) => setModal({ id, edit: false })}
           onOpenFlow={openFlowEvent}
           onResolve={(q) => send({ type: "card_edit", id: q.id, fields: { resolved: true } })}
         />
-      ) : (
-        <button className="show-sidebar btn" onClick={() => setShowSidebar(true)}>
-          <PanelRightOpen size={15} aria-hidden /> Panel
-        </button>
-      )}
+      </div>
 
       {modal && (
         <CardModal
@@ -397,17 +404,23 @@ export default function App() {
 
       {needMic && !fatal && (
         <div className="overlay">
-          <div className="finishing">
-            <h2>Reconnect your microphone</h2>
-            <p className="muted">The meeting is still running. Your browser needs a click to use the mic again.</p>
-            <div className="source-pick">
-              <button className="source on" onClick={() => reopenMic("mic")}>
-                <Mic size={20} aria-hidden />
-                <b>Mic</b>
+          <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="remic-h">
+            <h2 id="remic-h">Reconnect your microphone</h2>
+            <p>The meeting is still running. Your browser needs a click to use the mic again.</p>
+            <div className="choices">
+              <button className="choice on" onClick={() => reopenMic("mic")}>
+                <Mic size={22} strokeWidth={1.75} aria-hidden />
+                <span>
+                  <b>Mic</b>
+                  <span>Everyone is in the room</span>
+                </span>
               </button>
-              <button className="source" onClick={() => reopenMic("mic_tab")} disabled={!tabAudioSupported()}>
-                <MonitorSpeaker size={20} aria-hidden />
-                <b>Mic + Tab</b>
+              <button className="choice" onClick={() => reopenMic("mic_tab")} disabled={!tabAudioSupported()}>
+                <MonitorSpeaker size={22} strokeWidth={1.75} aria-hidden />
+                <span>
+                  <b>Mic + meeting tab</b>
+                  <span>Google Meet or Zoom in Chrome</span>
+                </span>
               </button>
             </div>
             {micError && <p className="form-error">{micError}</p>}
@@ -417,22 +430,26 @@ export default function App() {
 
       {fatal && (
         <div className="overlay">
-          <div className="finishing">
-            <h2>Meeting disconnected</h2>
-            <p className="muted">{fatal}</p>
-            <button className="btn btn-primary" onClick={newMeeting}>
-              Back to start
-            </button>
+          <div className="dialog" role="alertdialog" aria-modal="true" aria-labelledby="fatal-h">
+            <h2 id="fatal-h">Meeting disconnected</h2>
+            <p>{fatal}</p>
+            <div className="mc-row">
+              <button className="mc-btn mc-btn-primary" onClick={newMeeting}>
+                New meeting
+              </button>
+              <a className="mc-btn mc-btn-outline" href="/dashboard">
+                Dashboard
+              </a>
+            </div>
           </div>
         </div>
       )}
-
 
       <div className="toasts" aria-live="polite">
         {state.toasts.map((t) => (
           <div key={t.id} className={`toast ${t.kind}`}>
             <span>{t.text}</span>
-            <button className="icon-btn" onClick={() => dispatch({ type: "dismissToast", id: t.id })} aria-label="Dismiss">
+            <button className="toast-x" onClick={() => dispatch({ type: "dismissToast", id: t.id })} aria-label="Dismiss">
               <X size={14} aria-hidden />
             </button>
           </div>
@@ -441,7 +458,7 @@ export default function App() {
 
       {exporting &&
         createPortal(
-          <div className="offscreen" ref={sheetRef} aria-hidden>
+          <div className="offscreen" ref={sheetRef} aria-hidden data-theme="light">
             <ExportSheet title={state.title} cards={cards} meetingT={clock()} flow={state.flow} />
           </div>,
           document.body,
@@ -450,7 +467,7 @@ export default function App() {
   );
 }
 
-/** After Stop: a slim progress line on the board (the board stays visible for the final Flow Map pass). */
+/** After Stop: a slim progress line (the board stays visible for the final Flow Map pass). */
 function FinishingBar({ step }: { step: string | null }) {
   const cur = STEPS.findIndex((x) => x.key === step);
   return (
@@ -481,33 +498,30 @@ function ReportBanner({
   onCopyReplay: (() => void) | null;
   onClose: () => void;
 }) {
-  const found: string[] = [];
-  if (gaps) found.push(`${gaps} gap${gaps > 1 ? "s" : ""} nobody covered`);
-  if (conflicts) found.push(`${conflicts} conflict${conflicts > 1 ? "s" : ""}`);
   return (
-    <div className="report-banner" role="status">
-      <span className="rb-text">
+    <div className="banner" role="status">
+      <span className="b-text">
         <b>Meeting ended. The report is ready.</b>
-        {found.length > 0 ? (
-          <span className="rb-found">
-            {gaps > 0 && <CircleHelp size={14} aria-hidden />}
-            {gaps === 0 && conflicts > 0 && <TriangleAlert size={14} aria-hidden />}
-            Muse Spark’s final check: {found.join(" · ")}
+        {gaps || conflicts ? (
+          <span className="b-found">
+            Muse Spark’s final check:
+            {gaps > 0 && <CountTag kind="gap" n={gaps} />}
+            {conflicts > 0 && <CountTag kind="conflict" n={conflicts} />}
           </span>
         ) : (
-          <span className="rb-found muted">Muse Spark’s final check found no open gaps.</span>
+          <span className="b-found">Muse Spark’s final check found no open gaps.</span>
         )}
       </span>
       {onCopyReplay && (
-        <button className="btn" onClick={onCopyReplay} title="Anyone with this link can watch the meeting again">
-          <Link2 size={15} aria-hidden /> Copy replay link
+        <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={onCopyReplay} title="Anyone with this link can watch the meeting again">
+          <Link2 strokeWidth={1.75} aria-hidden /> Copy replay link
         </button>
       )}
-      <button className="btn btn-primary" onClick={onOpen}>
-        <Presentation size={15} aria-hidden /> Open report
+      <button className="mc-btn mc-btn-primary mc-btn-sm" onClick={onOpen}>
+        <Presentation strokeWidth={1.75} aria-hidden /> Open report
       </button>
-      <button className="icon-btn" onClick={onClose} aria-label="Hide">
-        <X size={16} aria-hidden />
+      <button className="mc-ib ghost" onClick={onClose} aria-label="Hide">
+        <X size={16} strokeWidth={1.75} aria-hidden />
       </button>
     </div>
   );

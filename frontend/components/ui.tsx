@@ -26,9 +26,8 @@ export function typeLabel(c: Card): string {
 }
 
 export function TypeChip({ card }: { card: Card }) {
-  const m = COLUMN_META[card.column];
   return (
-    <span className="type-chip" style={{ color: m.color, background: m.soft }}>
+    <span className="type-chip">
       <ColumnIcon column={card.column} size={14} />
       {typeLabel(card)}
     </span>
@@ -38,8 +37,8 @@ export function TypeChip({ card }: { card: Card }) {
 export function StatusBadge({ status }: { status: UpdateStatus }) {
   const m = STATUS_META[status];
   return (
-    <span className="status-badge" style={{ color: m.color, background: m.soft }}>
-      <span className="dot" style={{ background: m.color }} />
+    <span className={`status-badge status-${status}`}>
+      <span className="dot" />
       {m.label}
     </span>
   );
@@ -47,7 +46,6 @@ export function StatusBadge({ status }: { status: UpdateStatus }) {
 
 /** Card illustration: Muse Image result, a "drawing…" shimmer while pending, or the column icon. */
 export function Illus({ card, className = "", eager = false }: { card: Card; className?: string; eager?: boolean }) {
-  const m = COLUMN_META[card.column];
   const { url, failed } = useImage(card.image_status === "ready" ? card.image_url : null);
   if (url) {
     // eslint-disable-next-line @next/next/no-img-element
@@ -55,13 +53,13 @@ export function Illus({ card, className = "", eager = false }: { card: Card; cla
   }
   if (card.image_status === "pending" || (card.image_status === "ready" && !failed)) {
     return (
-      <div className={`illus illus-pending ${className}`} style={{ background: m.soft, color: m.color }} title="Muse Image is drawing…">
+      <div className={`illus illus-pending ${className}`} title="Muse Image is drawing…">
         <Sparkles size={18} aria-hidden />
       </div>
     );
   }
   return (
-    <div className={`illus illus-empty ${className}`} style={{ background: m.soft, color: m.color }}>
+    <div className={`illus illus-empty ${className}`}>
       {card.image_status === "failed" || failed ? <ImageOff size={18} aria-hidden /> : <ColumnIcon column={card.column} size={20} />}
     </div>
   );

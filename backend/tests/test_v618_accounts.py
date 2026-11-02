@@ -157,7 +157,8 @@ async def test_sign_in_claim_and_dashboard(server, store, login):
         cl = (await c.post(f"{h}/api/me/meetings/claim", json={"items": items}, headers=_bearer(tok))).json()
         assert cl["added"] == 1 and [m["rid"] for m in cl["meetings"]] == [k1["replay_id"]]
         row = cl["meetings"][0]
-        assert set(row) == {"rid", "title", "date", "duration_s", "gaps", "conflicts", "created", "expires"}
+        assert set(row) == {"rid", "title", "date", "duration_s", "gaps", "conflicts", "created", "expires",
+                            "bugs", "answered", "usage", "findings"}       # v6.19: + counts, usage, findings
         assert row["expires"] - row["created"] == 30 * 86400
         # someone else can't take it, even with the key
         cl2 = (await c.post(f"{h}/api/me/meetings/claim", json={"items": items[:1]}, headers=_bearer(other))).json()

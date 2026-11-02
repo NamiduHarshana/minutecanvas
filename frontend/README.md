@@ -25,7 +25,12 @@ gcloud run deploy minutecanvas-web --source frontend --project minutecanvas-nh20
 4. Set the backend's `FRONTEND_ORIGIN` to this frontend URL (exact, no trailing slash) and redeploy the backend.
 
 ## Pages
-- `/` landing page · `/meet` the app · `/replay?id=…` replay (`&view=report` opens the report) · `/privacy` · `/meetings` My meetings (Google sign-in)
+- Public (top nav, no sidebar): `/` landing · `/privacy`
+- App (left sidebar): `/dashboard` · `/meet` new meeting (becomes the full-screen live meeting) · `/meetings` · `/findings` · `/usage` · `/account` (Google sign-in, theme, delete all)
+- `/replay?id=…` full-screen replay: `&view=report` opens the report, `&f=<finding id>` opens a finding, `&t=<seconds>` starts there
+- Signed out, the app pages show the meetings made in this browser (kept in local storage); signing in adds them to the account.
+- Theme: dark by default, follows the OS; Account › Appearance (or the sidebar ⋯ menu) overrides it. Report slides and the board export stay light.
+- Design: tokens in `app/tokens.css` (from the approved "MinuteCanvas Design System"), components and screens in `app/globals.css`.
 - Landing settings in `.env.production`: `NEXT_PUBLIC_DEMO_VIDEO_ID`, `NEXT_PUBLIC_DEMO_REPLAY_ID`, `NEXT_PUBLIC_CONTACT_EMAIL`.
 - Google sign-in needs no frontend setting: the page asks the backend (`GET /api/auth/config`) for the client id.
 
