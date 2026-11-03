@@ -133,6 +133,9 @@ class Session:
         self.voice_status = "idle"
         self.voice_log: list[dict] = []   # voice sessions that ended: errors, resent audio, pacer stalls (debug)
         self.recording_mono = time.monotonic()
+        self.audio_mono = time.monotonic()        # last audio frame (or Start / Resume): see SessionManager sweep
+        self.started_wall: float | None = None    # Start .. end of Meta Voice (wall clock): daily meeting minutes
+        self.ended_wall: float | None = None
         self.recorder: Recorder | None = Recorder() if settings.replay_enabled else None
         self.store = None                  # replay storage, set by SessionManager
         self.library = None                # accounts.Library, set by SessionManager
@@ -206,13 +209,40 @@ class Session:
             return
         if offset + len(pcm) > allowed_end:
             pcm = pcm[: allowed_end - offset]
+        self.audio_mono = time.monotonic()
         self.audio.append_at(offset, pcm)
 
     # ---------------- lifecycle ----------------
+    def unstarted_expired(self, now: float | None = None) -> bool:
+        """Created but never started within UNSTARTED_TTL_S: not a live meeting any more (v6.22: such sessions held
+        the MAX_ACTIVE_SESSIONS slots for up to SESSION_TTL_MINUTES and blocked everyone)."""
+        now = time.monotonic() if now is None else now
+        return self.state == "created" and now - self.created_mono > settings.unstarted_ttl_s
+
+    def no_audio_too_long(self, now: float | None = None) -> bool:
+        """Recording with a browser connected, but not one audio frame for NO_AUDIO_STOP_S (a real browser streams the
+        whole time, quiet rooms included). Paused meetings and a dropped browser (10-min rule) are not affected."""
+        now = time.monotonic() if now is None else now
+        return (self.state == "recording" and self.socket is not None and settings.no_audio_stop_s > 0
+                and now - self.audio_mono > settings.no_audio_stop_s)
+
+    def billed_interval(self, now_wall: float) -> tuple[float, float] | None:
+        """Wall-clock Start .. end of Meta Voice (still running = now): what the daily meeting minutes count."""
+        if self.started_wall is None:
+            return None
+        return self.started_wall, self.ended_wall if self.ended_wall is not None else now_wall
+
     async def start(self):
         if self.state != "created":
             return
+        if self.unstarted_expired():
+            await self.send({"type": "error", "code": "bad_token", "message": "This meeting expired before it started."})
+            if self.socket is not None:
+                await _close_quietly(self.socket)
+            return
         self.state = "recording"
+        self.started_wall = time.time()
+        self.audio_mono = time.monotonic()
         self.recording_mono = time.monotonic()
         self.voice = VoiceStream(self.audio, self._on_voice, self.keywords)
         self.voice.start()
@@ -221,6 +251,8 @@ class Session:
 
     async def set_paused(self, paused: bool):
         if self.state in ("recording", "paused"):
+            if not paused and self.state == "paused":
+                self.audio_mono = time.monotonic()      # the no-audio clock starts again at Resume
             self.state = "paused" if paused else "recording"
             await self.send({"type": "state", "state": self.state})
 
@@ -236,6 +268,7 @@ class Session:
             await asyncio.sleep(0.1)
         if self.voice:
             await self.voice.stop(wait_s=15)
+        self.ended_wall = time.time()
         for p in list(self.partials.values()):          # unfinished turn -> keep it (at the time it was said)
             if p.get("text"):
                 await self._add_final(p)
@@ -1287,6 +1320,8 @@ class Session:
             t.cancel()
         if self.voice:
             await self.voice.stop(wait_s=2)
+        if self.started_wall is not None and self.ended_wall is None:
+            self.ended_wall = time.time()
         if self.socket:
             await _close_quietly(self.socket)
         self.images.clear()
@@ -1334,6 +1369,7 @@ class SessionManager:
         self.meta = meta
         self.sessions: dict[str, Session] = {}
         self.ip_limiter = RateLimiter(settings.sessions_per_ip_per_hour, 3600)
+        self.past_intervals: list[tuple[float, float]] = []   # billed Start..end of meetings already removed
         self.store = make_store() if settings.replay_enabled else None     # also sets self.library
         self._cleanup: asyncio.Task | None = None
         self._sweep: asyncio.Task | None = None
@@ -1373,7 +1409,29 @@ class SessionManager:
         self.sessions.clear()
 
     def active_count(self) -> int:
-        return sum(1 for s in self.sessions.values() if s.state != "done")
+        now = time.monotonic()
+        return sum(1 for s in self.sessions.values() if s.state != "done" and not s.unstarted_expired(now))
+
+    def used_minutes(self, now_wall: float | None = None) -> float:
+        """Meeting minutes (Start .. end of Meta Voice) inside the last 24 h, all meetings of this server process.
+        In memory: a backend restart starts the count again."""
+        now_wall = time.time() if now_wall is None else now_wall
+        since = now_wall - 24 * 3600
+        self.past_intervals = [iv for iv in self.past_intervals if iv[1] > since]
+        intervals = list(self.past_intervals)
+        intervals += [iv for s in self.sessions.values() if (iv := s.billed_interval(now_wall))]
+        return sum(max(0.0, min(end, now_wall) - max(start, since)) for start, end in intervals) / 60
+
+    def daily_limit_reached(self) -> bool:
+        return settings.daily_meeting_minutes > 0 and self.used_minutes() >= settings.daily_meeting_minutes
+
+    def _forget(self, sid: str) -> Session | None:
+        s = self.sessions.pop(sid, None)
+        if s is not None:
+            iv = s.billed_interval(time.time())
+            if iv:
+                self.past_intervals.append(iv)
+        return s
 
     def create(self, keywords: list[str], title: str | None, ip: str) -> Session:
         s = Session(self.meta, keywords, title, ip)
@@ -1393,17 +1451,30 @@ class SessionManager:
 
     async def _cleanup_loop(self):
         while True:
-            await asyncio.sleep(60)
-            now = time.monotonic()
-            for sid, s in list(self.sessions.items()):
-                old = now - s.created_mono > settings.session_ttl_minutes * 60
-                gone_s = now - s.last_seen if s.socket is None else 0
-                if s.state in ("recording", "paused") and not old:
-                    if gone_s > 10 * 60:   # browser gone 10 min: stop paying for voice, keep the report
-                        log.info("auto-stop abandoned session %s", sid)
-                        asyncio.create_task(s.stop())
-                    continue
-                if old or (s.state != "stopping" and gone_s > 30 * 60):
-                    log.info("cleanup session %s (state=%s)", sid, s.state)
-                    self.sessions.pop(sid, None)
-                    await s.close()
+            await asyncio.sleep(30)
+            await self.cleanup_once()
+
+    async def cleanup_once(self, now: float | None = None):
+        now = time.monotonic() if now is None else now
+        for sid, s in list(self.sessions.items()):
+            old = now - s.created_mono > settings.session_ttl_minutes * 60
+            gone_s = now - s.last_seen if s.socket is None else 0
+            if s.state in ("recording", "paused") and not old:
+                if gone_s > 10 * 60:   # browser gone 10 min: stop paying for voice, keep the report
+                    log.info("auto-stop abandoned session %s", sid)
+                    asyncio.create_task(s.stop())
+                elif s.no_audio_too_long(now):
+                    log.info("auto-stop session %s: connected but no audio for %.0f s", sid, now - s.audio_mono)
+                    await s.send({"type": "notice", "message": "No audio reached the server for a few minutes. "
+                                                               "Stopping the meeting."})
+                    asyncio.create_task(s.stop())
+                continue
+            if s.unstarted_expired(now):
+                log.info("cleanup session %s: never started", sid)
+                self._forget(sid)
+                await s.close()
+                continue
+            if old or (s.state != "stopping" and gone_s > 30 * 60):
+                log.info("cleanup session %s (state=%s)", sid, s.state)
+                self._forget(sid)
+                await s.close()

@@ -1,6 +1,7 @@
 """Small security helpers: text sanitising, origin check, rate limiting."""
 from __future__ import annotations
 
+import ipaddress
 import re
 import time
 from collections import defaultdict, deque
@@ -50,16 +51,41 @@ def client_ip(headers, fallback: str | None, trusted_hops: int = 1) -> str:
     return fallback or "unknown"
 
 
+def rate_key(ip: str) -> str:
+    """The key a per-IP limit counts on. An IPv6 user gets a whole /64 (often more) and can switch addresses inside it
+    at will, so all addresses of one /64 count as ONE client; IPv4 (also IPv4 written as IPv6) stays the address."""
+    try:
+        a = ipaddress.ip_address(ip.strip())
+    except ValueError:
+        return ip
+    if a.version == 6 and a.ipv4_mapped is None:
+        return str(ipaddress.ip_network(f"{a}/64", strict=False))
+    return str(getattr(a, "ipv4_mapped", None) or a)
+
+
 class RateLimiter:
-    """Sliding-window limiter, in memory (fine with --max-instances 1)."""
+    """Sliding-window limiter, in memory (one backend process)."""
+
+    PRUNE_AT = 5000            # keys kept before stale ones are dropped (many one-off clients must not grow memory)
 
     def __init__(self, limit: int, window_s: float):
         self.limit = limit
         self.window_s = window_s
         self._hits: dict[str, deque] = defaultdict(deque)
+        self._pruned = time.monotonic()
+
+    def _prune(self, now: float) -> None:
+        self._pruned = now
+        for k in [k for k, q in self._hits.items() if not q or now - q[-1] > self.window_s]:
+            del self._hits[k]
 
     def allow(self, key: str) -> bool:
         now = time.monotonic()
+        key = rate_key(key)
+        # stale keys go at least once per window: an IP stays in memory for at most ~2 windows (privacy page: "a few
+        # hours at most"); before v6.22 a key was never removed
+        if (len(self._hits) >= self.PRUNE_AT and key not in self._hits) or now - self._pruned > self.window_s:
+            self._prune(now)
         q = self._hits[key]
         while q and now - q[0] > self.window_s:
             q.popleft()

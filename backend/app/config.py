@@ -57,6 +57,16 @@ class Settings:
     sessions_per_ip_per_hour: int = field(default_factory=lambda: _int("SESSIONS_PER_IP_PER_HOUR", 6))
     max_active_sessions: int = field(default_factory=lambda: _int("MAX_ACTIVE_SESSIONS", 3))
     trusted_proxy_hops: int = field(default_factory=lambda: _int("TRUSTED_PROXY_HOPS", 1))
+    # v6.22 (no sign-in, public site): nobody may hold the live-meeting slots or empty the Meta credits.
+    # A created meeting that is not started within this time no longer counts as live and is removed (the app sends
+    # "start" right after it connects, so a real browser needs ~1 s)
+    unstarted_ttl_s: float = field(default_factory=lambda: _float("UNSTARTED_TTL_S", 120.0))
+    # recording, browser connected, but no audio frame at all for this long -> auto Stop (report + replay are kept).
+    # A real browser sends audio the whole time it records (quiet rooms too); paused meetings are not affected
+    no_audio_stop_s: float = field(default_factory=lambda: _float("NO_AUDIO_STOP_S", 180.0))
+    # server-wide: minutes of meetings (Start -> Stop, the time Meta Voice is billed) in the last 24 h; when used up,
+    # new meetings are refused until older ones leave the 24 h window. 0 = no limit
+    daily_meeting_minutes: float = field(default_factory=lambda: _float("DAILY_MEETING_MINUTES", 600.0))
     # WebSocket flood limits
     ws_msgs_per_s: float = field(default_factory=lambda: _float("WS_MSGS_PER_S", 10.0))
     ws_msg_burst: int = field(default_factory=lambda: _int("WS_MSG_BURST", 40))

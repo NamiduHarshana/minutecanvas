@@ -99,6 +99,8 @@ async def create_session(body: CreateSession, request: Request):
     ip = _ip(request)
     if mgr.active_count() >= settings.max_active_sessions:
         raise HTTPException(503, "too many live sessions right now, try again later")
+    if mgr.daily_limit_reached():            # protects the Meta credits (public site, no sign-in needed)
+        raise HTTPException(429, "MinuteCanvas has reached today's meeting limit. Please try again later.")
     if not mgr.ip_limiter.allow(ip):
         raise HTTPException(429, "too many sessions, try again later")
     keywords = [k for k in (clean_text(x, 40) for x in body.keywords[:30]) if k]
