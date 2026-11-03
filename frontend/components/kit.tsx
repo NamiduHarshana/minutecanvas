@@ -78,6 +78,9 @@ export function StatCard({
   const [hover, setHover] = useState<number | null>(null);
   const mounted = useMounted();
   const max = Math.max(0, ...data.map((d) => d.value));
+  // minmax(0, 1fr), not 1fr: a 1fr column can't shrink below its label, so with 30 bars the labelled columns grew and
+  // the axis ran past the card. Equal columns keep every label centred under its bar (labels may overflow their column).
+  const cols = { gridTemplateColumns: `repeat(${data.length}, minmax(0, 1fr))`, gap: data.length > 10 ? 4 : 10 };
   return (
     <div className="mc-card mc-stat">
       {head}
@@ -85,7 +88,7 @@ export function StatCard({
         {value}
       </div>
       <div className="l">{label}</div>
-      <div className="mc-bars" style={{ gridTemplateColumns: `repeat(${data.length}, 1fr)`, gap: data.length > 10 ? 4 : 10 }} onMouseLeave={() => setHover(null)}>
+      <div className="mc-bars" style={cols} onMouseLeave={() => setHover(null)}>
         {data.map((d, k) => (
           <i
             key={k}
@@ -101,7 +104,7 @@ export function StatCard({
           </span>
         )}
       </div>
-      <div className="mc-axis" style={{ gridTemplateColumns: `repeat(${data.length}, 1fr)`, gap: data.length > 10 ? 4 : 10 }}>
+      <div className="mc-axis" style={cols}>
         {data.map((d, k) => (
           <span key={k}>{mounted ? d.label : ""}</span>
         ))}

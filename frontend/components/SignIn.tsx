@@ -68,6 +68,7 @@ export function SignInCard({
               shape: "pill",
               logo_alignment: "left",
               width: 280,
+              locale: "en", // the site is English; without this Google uses the browser language (e.g. Sinhala)
             });
             setState("ready");
           },

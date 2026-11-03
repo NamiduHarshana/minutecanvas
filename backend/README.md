@@ -37,28 +37,28 @@ python scripts/replay.py debug/<run>.json               # re-apply a run's Flow 
 ```
 The layout part runs on any Node 18+ (`node scripts/run-ts.mjs scripts/layoutcheck.ts …` in frontend/, needs `npm install` there once); without Node it says "skipped".
 
-## Deploy (Cloud Run, us-central1)
+## Deploy (AWS: one EC2 server behind CloudFront)
 
-```bash
-# once: API key in Secret Manager (never in code or env files)
-printf "%s" "PASTE_KEY" | gcloud secrets create meta-api-key --data-file=- --project minutecanvas-nh2026
-PN=$(gcloud projects describe minutecanvas-nh2026 --format='value(projectNumber)')
-gcloud secrets add-iam-policy-binding meta-api-key --project minutecanvas-nh2026 \
-  --member="serviceAccount:${PN}-compute@developer.gserviceaccount.com" --role=roles/secretmanager.secretAccessor
+Live at **https://d56fdtsmdd5nf.cloudfront.net**. Frontend and backend share that one origin.
 
-gcloud run deploy minutecanvas-api --source backend --project minutecanvas-nh2026 --region us-central1 \
-  --allow-unauthenticated --max-instances 1 --timeout 3600 --session-affinity --no-cpu-throttling \
-  --memory 512Mi --set-secrets META_API_KEY=meta-api-key:latest \
-  --set-env-vars FRONTEND_ORIGIN=https://YOUR-FRONTEND.run.app,ACCESS_CODE=CHOOSE_ONE
 ```
-- `backend/.gcloudignore` uploads only `Dockerfile`, `.dockerignore`, `requirements.txt` and `app/` (never `.env`, `.venv`, `debug/`, `replays/`, `bench/`, `tests/`). Check with `gcloud meta list-files-for-upload backend`.
-- `--max-instances 1`: sessions live in memory.
-- `--no-cpu-throttling`: the voice pacer must keep sending silence while the browser is reconnecting.
-- `--timeout 3600`: WebSocket closes at 60 min; the browser reconnects and resends.
-- After the first deploy, check the log line `session … created (x-forwarded-for=… -> ip used …)`: the IP used must be your real public IP. If it shows a Google IP instead, redeploy with `TRUSTED_PROXY_HOPS=2`.
+browser ──HTTPS/WSS──> CloudFront ──HTTPS :443──> EC2 (Ubuntu 24.04, t3.small, Elastic IP)
+                                                   └─ Docker Compose: caddy (:80/:443, Let's Encrypt cert for <elastic-ip-dashed>.sslip.io)
+                                                        ├─ /api/*, /ws/*  -> backend  (this folder, uvicorn :8080, user appuser)
+                                                        └─ everything else -> frontend (Next.js standalone :8080, user app)
+```
+- **Server access:** AWS Systems Manager Session Manager only (EC2 role with `AmazonSSMManagedInstanceCore`); no SSH key, no port 22.
+- **Security group:** 443 only from the CloudFront origin-facing managed prefix list; 80 open for the Let's Encrypt HTTP-01 check and the redirect.
+- **CloudFront:** origin = the sslip.io name, HTTPS only. Default behaviour: redirect HTTP→HTTPS, all methods, `CachingDisabled` + origin request policy `AllViewerExceptHostHeader` (keeps the query string, `Authorization` and `Origin`; WebSockets pass through). `/_next/static/*`: `CachingOptimized`.
+- **Secrets:** `META_API_KEY` and `AUTH_SECRET` live in a root-only (`chmod 600`) env file on the server, read by Compose (`env_file`); never in the repo or the image.
+- **Backend env:** `MOCK_META=0`, `DEBUG_DUMP=0`, `REPLAY_DIR=/data` (a host folder owned by uid 1000, kept across restarts and reboots), `FRONTEND_ORIGIN` = the CloudFront URL (exact, no trailing slash), `GOOGLE_CLIENT_ID`, `TRUSTED_PROXY_HOPS=2`, `SESSIONS_PER_IP_PER_HOUR=4`, `MAX_SESSION_MINUTES=70`, `MAX_ACTIVE_SESSIONS=3`.
+- **One backend container:** sessions live in memory, so run exactly one. Restarting it ends running meetings.
+- **Client IP:** CloudFront appends the viewer IP to `X-Forwarded-For` and Caddy (`trusted_proxies static 0.0.0.0/0`, safe because 443 is CloudFront-only) appends CloudFront's, so the real IP is 2 hops from the right: `TRUSTED_PROXY_HOPS=2`. Check the log line `session … created (x-forwarded-for=… -> ip used …)`: the IP used must be the viewer's own.
+- **Frontend:** `frontend/.env.production` (in the repo, public values) is baked in at build time.
+- **Update to a new commit** (on the server): `git fetch && git checkout <commit>` in the repo folder, then `docker compose build` and `docker compose up -d` in the deploy folder.
 
 ## Security
-API key only on the backend (Secret Manager) · session token as the first WS message · Origin check on WS + CORS for the frontend only · rate limits (sessions per IP, live sessions, Spark/image caps, WS messages per second, max frame size, audio can't arrive faster than real time) · card text sanitised (frontend must still use `textContent`) · audio never stored (replays keep text, board, Flow Map and card images only; random 128-bit id, reads rate-limited per IP) · images and report need `Authorization: Bearer <token>`.
+API key only on the backend (root-only env file on the server) · session token as the first WS message · Origin check on WS + CORS for the frontend only · rate limits (sessions per IP, live sessions, Spark/image caps, WS messages per second, max frame size, audio can't arrive faster than real time) · card text sanitised (frontend must still use `textContent`) · audio never stored (replays keep text, board, Flow Map and card images only; random 128-bit id, reads rate-limited per IP) · images and report need `Authorization: Bearer <token>`.
 
 ## Protocol (for the frontend)
 

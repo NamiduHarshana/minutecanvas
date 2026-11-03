@@ -108,7 +108,7 @@ export function Dashboard() {
           )}
 
           <section className="grid2">
-            <div className="mc-card list-card">
+            <div className="mc-card list-card recent">
               <div className="card-h">
                 <h3>Recent meetings</h3>
                 <a className="link" href="/meetings">
@@ -126,7 +126,7 @@ export function Dashboard() {
               {recent.map((m) => (
                 <div key={m.rid} className="mc-mrow dash">
                   <div style={{ minWidth: 0 }}>
-                    <a className="t" href={replayHref(m.rid)}>
+                    <a className="t" href={replayHref(m.rid)} title={m.title || undefined}>
                       {m.title || "Untitled meeting"}
                     </a>
                     <div className="s">

@@ -13,16 +13,11 @@ npm run dev                        # http://localhost:3000
 Backend in another terminal with `MOCK_META=1` in `backend/.env` = fake transcript/cards/images, 0 credits.
 Use **Chrome**. `Mic + Tab` needs Chrome's “Also share tab audio”.
 
-## Deploy (Cloud Run, us-central1)
+## Deploy (AWS, one server behind CloudFront)
 
-1. Deploy the backend first and copy its URL.
-2. Put it in `frontend/.env.production` → `NEXT_PUBLIC_BACKEND_URL=https://minutecanvas-api-….run.app` (baked in at build time).
-3. Deploy:
-```bash
-gcloud run deploy minutecanvas-web --source frontend --project minutecanvas-nh2026 --region us-central1 \
-  --allow-unauthenticated --max-instances 2 --memory 512Mi
-```
-4. Set the backend's `FRONTEND_ORIGIN` to this frontend URL (exact, no trailing slash) and redeploy the backend.
+Frontend and backend run on the same server and the same origin; the whole setup is in `../backend/README.md` → Deploy.
+- `frontend/.env.production` holds the site URL (`NEXT_PUBLIC_BACKEND_URL=https://d56fdtsmdd5nf.cloudfront.net`) and the landing settings. It is baked in at build time (the `Dockerfile` copies it), so rebuild the frontend image after any change.
+- The production build sets a CSP whose `connect-src` includes `NEXT_PUBLIC_BACKEND_URL` and its `wss://` form.
 
 ## Pages
 - Public (top nav, no sidebar): `/` landing · `/privacy`

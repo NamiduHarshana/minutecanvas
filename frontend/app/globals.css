@@ -113,7 +113,8 @@ button.mc-tag:hover { filter: brightness(1.12); }
 .mc-bars:hover i { opacity: 0.7; }
 .mc-bars i:hover { opacity: 1; }
 .mc-axis { white-space: nowrap; display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-top: 8px; font: 400 12px/16px var(--font-sans); color: var(--muted); text-align: center; }
-.mc-axis span { overflow: visible; }
+/* a label is often wider than its bar's column (30 bars): text-align stops centring overflowing text, flex keeps it centred */
+.mc-axis span { overflow: visible; display: flex; justify-content: center; }
 .mc-tip {
   position: absolute; bottom: calc(100% + 6px); transform: translateX(-50%); z-index: 5; pointer-events: none;
   background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-sm);
@@ -123,6 +124,13 @@ button.mc-tag:hover { filter: brightness(1.12); }
 /* meeting row */
 .mc-mrow { display: grid; grid-template-columns: 1fr auto auto auto; gap: 20px; align-items: center; padding: 14px 16px; border-radius: var(--radius-md); }
 .mc-mrow.dash { grid-template-columns: minmax(0, 1fr) auto auto; }
+/* Dashboard "Recent meetings" sits in a half-width card: at 1280 px the tags (~156 px) and buttons (~148 px) left the
+   title ~45 px ("Brief …"). In a narrow card the title gets its own full-width line; tags and buttons go below it. */
+.list-card.recent { container-type: inline-size; }
+@container (max-width: 620px) {
+  .mc-mrow.dash { grid-template-columns: minmax(0, 1fr) auto; row-gap: 10px; }
+  .mc-mrow.dash > :first-child { grid-column: 1 / -1; }
+}
 .mc-mrow:hover { background: var(--surface-2); }
 .mc-mrow .t { display: block; font: 600 15px/20px var(--font-sans); color: var(--ink); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mc-mrow .t:hover { text-decoration: underline; text-underline-offset: 3px; }
@@ -185,14 +193,18 @@ button.mc-tag:hover { filter: brightness(1.12); }
 .app-top { display: none; }
 .app-scrim { display: none; }
 .main { flex: 999 1 560px; min-width: 0; padding: 32px 40px 48px; display: flex; flex-direction: column; gap: 24px; }
-.wrap { max-width: 1180px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; }
+.wrap { max-width: 1180px; width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 24px; container: page / inline-size; }
 .wrap.narrow-860 { max-width: 860px; }
 .wrap.narrow-760 { max-width: 760px; }
 .head { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between; }
 .h-greet { margin: 0; font: 700 44px/48px var(--font-display); letter-spacing: -0.025em; }
 .h-page { margin: 0; font: 650 28px/34px var(--font-display); letter-spacing: -0.02em; }
 .sub { margin: 6px 0 0; color: var(--muted); font-size: 15px; line-height: 22px; }
-.grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 24px; }
+/* 4 stat cards: 4 / 2 / 1 per row, never 3 + 1. auto-fit with a 230 px minimum gave 3 + 1 at a 1280 px window
+   (936 px of content, 4 cards need 992). Measured on the page width, so it also holds without the sidebar. */
+.grid4 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
+@container page (min-width: 500px) { .grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container page (min-width: 880px) { .grid4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 24px; }
 .hero {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xl); padding: 32px; display: flex;
@@ -262,7 +274,10 @@ button.mc-tag:hover { filter: brightness(1.12); }
 .signin .card-h { width: 100%; margin-bottom: 0; }
 .lead-s { color: var(--ink-2); font-size: 15px; line-height: 23px; max-width: 36em; }
 .points { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; color: var(--ink-2); }
-.gis { min-height: 44px; }
+/* The Google button is a cross-origin iframe whose page has no color-scheme (= light). Inside our dark page the iframe
+   inherited color-scheme: dark; when the two differ the browser paints the iframe opaque white (the white box around
+   the pill). Light on the container makes them match, so the iframe stays transparent in both themes. */
+.gis { min-height: 44px; color-scheme: light; }
 .models-grid { gap: 16px; }
 .model-row { display: flex; gap: 12px; align-items: flex-start; }
 .model-row b { display: block; }
