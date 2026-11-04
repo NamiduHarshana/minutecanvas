@@ -51,6 +51,13 @@ class Settings:
     report_model: str = field(default_factory=lambda: _env("REPORT_MODEL", "muse-wonder-1.0"))
     # Muse Wonder gets this long per try (2 tries: the second only if it rejects reasoning_effort/strict)
     report_timeout_s: float = field(default_factory=lambda: _float("REPORT_TIMEOUT_S", 60.0))
+    # v6.25: "Ask about this meeting" on the replay page (Muse Wonder, Muse Spark as the fallback). Every question
+    # costs credits and anyone with a replay link can ask: limits per IP, per replay and for the whole server (24 h)
+    ask_model: str = field(default_factory=lambda: _env("ASK_MODEL", "muse-wonder-1.0"))
+    ask_timeout_s: float = field(default_factory=lambda: _float("ASK_TIMEOUT_S", 45.0))
+    ask_per_ip_per_hour: int = field(default_factory=lambda: _int("ASK_PER_IP_PER_HOUR", 20))
+    ask_per_replay_per_day: int = field(default_factory=lambda: _int("ASK_PER_REPLAY_PER_DAY", 30))
+    ask_daily_max: int = field(default_factory=lambda: _int("ASK_DAILY_MAX", 150))     # 0 = no server-wide limit
     image_model: str = field(default_factory=lambda: _env("IMAGE_MODEL", "muse-image-1.0"))
     image_reasoning: str = field(default_factory=lambda: _env("IMAGE_REASONING", "low"))
 

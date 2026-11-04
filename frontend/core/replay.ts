@@ -41,6 +41,40 @@ export async function fetchReplay(id: string): Promise<ReplayData> {
   return j;
 }
 
+// v6.25: "Ask about this meeting" — answered only from the transcript; quotes are the meeting's real lines
+export interface AskQuote {
+  t: number;
+  speaker: string;
+  text: string;
+}
+export interface AskAnswer {
+  answer: string;
+  covered: boolean;
+  quotes: AskQuote[];
+  by: string | null;
+}
+
+export async function askReplay(id: string, question: string): Promise<AskAnswer> {
+  let res: Response;
+  try {
+    res = await fetch(`${BACKEND_URL}/api/replays/${encodeURIComponent(id)}/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+  } catch {
+    throw new ReplayError("Can't reach the MinuteCanvas server. Check your internet connection.");
+  }
+  if (res.status === 429 || res.status === 400) {
+    const j = await res.json().catch(() => null);
+    throw new ReplayError(typeof j?.detail === "string" ? j.detail : "Please try again in a minute.");
+  }
+  if (res.status === 404) throw new ReplayError("This replay doesn't exist or was removed.");
+  if (!res.ok) throw new ReplayError("Couldn't answer right now. Please try again.");
+  const j = (await res.json()) as AskAnswer;
+  return { answer: String(j.answer || ""), covered: !!j.covered, quotes: Array.isArray(j.quotes) ? j.quotes : [], by: j.by ?? null };
+}
+
 /** State after the first `n` events, without highlights (a seek shouldn't flash every card). */
 export function stateAt(events: ReplayData["events"], n: number): MeetingState {
   let s: MeetingState = { ...initialState, conn: "closed" };

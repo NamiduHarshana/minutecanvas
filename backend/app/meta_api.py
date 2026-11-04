@@ -175,6 +175,10 @@ class MetaClient:
             await _mock_wait()
             if schema_name == "flow_calls":
                 return _mock_flow_json(user, history)
+            if schema_name == "ask_meeting":        # v6.25 mock: cites the first two lines of the transcript
+                ids = [int(x.split(" ", 1)[0][1:]) for x in json.loads(user).get("transcript", [])[:2]]
+                return {"covered": bool(ids), "answer": "Mock answer: this is what the meeting said about it.",
+                        "lines": ids}
             if schema_name == "verify_conflict":
                 return {"same_fact": True, "a_is_about": "mock", "b_is_about": "mock"}
             if schema_name == "gap_status":         # mock: gaps stay open

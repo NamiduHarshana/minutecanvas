@@ -721,10 +721,29 @@ button.mc-tag:hover { filter: brightness(1.12); }
   margin-top: 6px; font: italic 400 13px/18px var(--font-sans); color: var(--ink-2); border: 0; width: 100%; text-align: left; cursor: pointer;
 }
 .mc-quote:hover { background: var(--surface-3); }
+a.mc-quote { text-decoration: none; }
 .mc-quote small { display: block; font-style: normal; color: var(--muted); font-size: 12px; }
 .tcard { padding: 16px; display: flex; flex-direction: column; gap: 4px; }
 .tcard .tlines { max-height: 320px; overflow-y: auto; margin: 4px -16px 0; }
 .tcard .tline { padding: 8px 16px; }
+/* v6.25: "Ask about this meeting" window (replay header button) */
+.overlay[hidden] { display: none; }
+.ask-modal { width: min(680px, 100%); display: flex; flex-direction: column; }
+.ask-title { font: 600 18px/24px var(--font-sans); }
+.ask-close { margin-left: auto; }
+.askp { display: flex; flex-direction: column; gap: 14px; padding: 12px 20px 20px; min-height: 0; }
+.ask-list { max-height: min(560px, calc(100vh - 220px)); max-height: min(560px, calc(100dvh - 220px)); overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+.ask-empty { display: flex; flex-direction: column; gap: 12px; }
+.qa { display: flex; flex-direction: column; }
+.qa-q { font: 600 15px/22px var(--font-sans); color: var(--ink); }
+.qa-a { margin: 6px 0 2px; font-size: 14.5px; line-height: 22px; color: var(--ink-2); }
+.qa-none { color: var(--muted); }
+.qa-err { margin: 6px 0 0; font-size: 13.5px; line-height: 20px; color: var(--bug); }
+.qa-wait { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; }
+.qa-by { margin-top: 8px; font-size: 12px; line-height: 16px; color: var(--muted); }
+.ask-form { display: flex; gap: 8px; align-items: center; }
+.ask-form .input { flex: 1 1 auto; min-width: 0; }
+.ask-form .mc-btn { flex: 0 0 auto; height: 44px; }
 .rp-center { min-height: 100vh; min-height: 100dvh; display: grid; place-content: center; justify-items: center; gap: 14px; text-align: center; padding: 24px; background: var(--bg); }
 .rp-center h2 { font: 650 24px/30px var(--font-display); }
 .rp-center p { color: var(--muted); max-width: 32em; }
@@ -924,4 +943,4 @@ button.mc-tag:hover { filter: brightness(1.12); }
 .usage-hint { white-space: nowrap; }
 @media (max-width: 1280px) { .usage-hint { display: none; } }
 /* v6.24: the Muse Wonder part only where the header has room for it next to a long title */
-@media (max-width: 1439px) { .usage-wonder { display: none; } }
+@media (max-width: 1679px) { .usage-wonder { display: none; } }

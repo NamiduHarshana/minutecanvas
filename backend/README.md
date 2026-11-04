@@ -1,6 +1,6 @@
 # MinuteCanvas backend
 
-FastAPI + WebSockets. Browser audio → **Muse Voice Transcribe** (live transcript, speaker labels) → **Muse Spark** every ~40 s (board cards as JSON) → **Muse Image** (card illustrations) → final report (summary + takeaways by **Muse Wonder**, Muse Spark as the fallback).
+FastAPI + WebSockets. Browser audio → **Muse Voice Transcribe** (live transcript, speaker labels) → **Muse Spark** every ~40 s (board cards as JSON) → **Muse Image** (card illustrations) → final report (summary + takeaways by **Muse Wonder**, Muse Spark as the fallback). On the replay page, people can ask questions about the meeting: Muse Wonder answers only from the transcript and the server attaches the real transcript lines it cites.
 
 ## Run locally
 

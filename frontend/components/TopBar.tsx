@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ChevronDown, Download, ExternalLink, FileImage, FileText, Link2, Pause, Play, Presentation, Square, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronDown, Download, ExternalLink, FileImage, FileText, Link2, MessageCircleQuestion, Pause, Play, Presentation, Square, Trash2 } from "lucide-react";
 import type { ConnStatus } from "@/core/client";
 import type { ServerState } from "@/core/types";
 import { fmtTime } from "@/core/store";
@@ -28,6 +28,7 @@ export function TopBar({
   onExport,
   onShowReport,
   replay,
+  onAsk,
 }: {
   title: string | null;
   serverState: ServerState;
@@ -44,6 +45,7 @@ export function TopBar({
   onExport: (kind: "png" | "pdf") => void;
   onShowReport: () => void;
   replay?: ReplayActions | null;
+  onAsk?: (() => void) | null;     // v6.25: after Stop, once the replay is saved
 }) {
   const live = serverState === "recording" || serverState === "paused";
   const done = serverState === "done";
@@ -81,6 +83,11 @@ export function TopBar({
         </>
       )}
       {replay && <ReplayMenu replay={replay} />}
+      {onAsk && (
+        <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={onAsk} aria-haspopup="dialog">
+          <MessageCircleQuestion strokeWidth={1.75} aria-hidden /> Ask
+        </button>
+      )}
       {(done || hasReport) && <ExportMenu disabled={exporting} onExport={onExport} />}
       {hasReport && (
         <button className="mc-btn mc-btn-primary mc-btn-sm" onClick={onShowReport}>

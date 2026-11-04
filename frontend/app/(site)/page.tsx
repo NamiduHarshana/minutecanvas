@@ -20,7 +20,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
   },
   {
     q: "Which models does it use?",
-    a: "Muse Voice Transcribe for the transcript, Muse Spark for the board, the Flow Map and the findings, Muse Image for the card pictures, and Muse Wonder for the report’s summary and key takeaways.",
+    a: "Muse Voice Transcribe for the transcript, Muse Spark for the board, the Flow Map and the findings, Muse Image for the card pictures, and Muse Wonder for the report’s summary, the key takeaways and the questions you ask on the replay page.",
   },
   {
     q: "What happens to my audio?",

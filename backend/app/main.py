@@ -8,6 +8,7 @@ HTTP
   GET  /api/replays/{rid}                  -> gzipped replay log (the random replay id is the access key)
   GET  /api/replays/{rid}/images/{img}     -> card image of a replay
   DELETE /api/replays/{rid}                (X-Replay-Key: <owner key> or Authorization: Bearer <login token>)
+  POST /api/replays/{rid}/ask              {"question"} -> {answer, covered, quotes [{t, speaker, text}], by} (v6.25)
   GET  /api/auth/config                    -> {"google_client_id"} ("" = sign-in off)
   POST /api/auth/google                    {"credential": Google ID token} -> {token, user}
   GET  /api/me/meetings                    (Bearer login token) -> {user, meetings}
@@ -32,6 +33,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from .accounts import AuthError, GoogleVerifier, Tokens, uid_for
+from .ask import Asker, AskError, AskLimit
 from .config import SAMPLE_RATE, settings
 from .meta_api import MetaClient, image_mime
 from .replay import events_key, image_key, valid_img, valid_rid
@@ -53,6 +55,7 @@ async def lifespan(app: FastAPI):
     app.state.login_limiter = RateLimiter(settings.logins_per_ip_per_hour, 3600)
     app.state.google = GoogleVerifier(settings.google_client_id)
     app.state.tokens = Tokens(settings.auth_secret)
+    app.state.asker = Asker(app.state.meta)
     yield
     await app.state.sessions.shutdown()
     await app.state.meta.aclose()
@@ -204,7 +207,30 @@ async def delete_replay(rid: str, request: Request):
     except Exception:  # noqa: BLE001
         raise HTTPException(502, "couldn't delete the replay, please try again") from None
     request.app.state.sessions.forget_replay(rid)
+    request.app.state.asker.forget(rid)
     return {"deleted": rid}
+
+
+class AskBody(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+
+
+@app.post("/api/replays/{rid}/ask")
+async def ask_replay(rid: str, body: AskBody, request: Request):
+    """v6.25: a question about this meeting, answered only from its transcript (see ask.py). The replay id is the
+    access key, the same as reading the replay."""
+    origin = request.headers.get("origin")
+    if origin and not origin_allowed(origin, settings.frontend_origins):
+        raise HTTPException(403, "origin not allowed")
+    if len(clean_text(body.question, 300)) < 3:
+        raise HTTPException(400, "Please type a question.")
+    store = await _replay_store(request, rid)
+    try:
+        return await request.app.state.asker.ask(rid, store, body.question, _ip(request))
+    except AskLimit as e:
+        raise HTTPException(429, str(e)) from None
+    except AskError:
+        raise HTTPException(502, "Couldn't answer right now. Please try again.") from None
 
 
 # ---------------- Google sign-in + My meetings ----------------

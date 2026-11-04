@@ -3,7 +3,7 @@
 // the live app, at the meeting time they were sent, so the transcript, board and Flow Map appear in the same order.
 // v6.19: player + three-lane timeline (Speakers / Parts / Findings) and the finding panel with its quotes.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, Link2, LoaderCircle, Pause, Play, Presentation, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Link2, LoaderCircle, MessageCircleQuestion, Pause, Play, Presentation, Trash2 } from "lucide-react";
 import type { Card, FlowData, ServerMsg } from "@/core/types";
 import { BACKEND_URL } from "@/core/client";
 import { fmtTime, initialState, orderedCards, reducer, speakerName, speakerTones, type MeetingState } from "@/core/store";
@@ -16,6 +16,7 @@ import { Board, type CardActions } from "./Board";
 import { Report } from "./Report";
 import { FlowMap, type FlowFocus } from "./FlowMap";
 import { FindingTag, Seg } from "./kit";
+import { AskWindow } from "./AskWindow";
 
 const SPEEDS = ["1", "2", "4", "8"] as const;
 const TICK_MS = 100;
@@ -113,6 +114,8 @@ export default function Replay() {
   const [view, setView] = useState<"board" | "report">("board");
   const [flowFocus, setFlowFocus] = useState<FlowFocus | null>(null);
   const [rid, setRid] = useState("");
+  const [askOpen, setAskOpen] = useState(false);
+  const closeAsk = useCallback(() => setAskOpen(false), []);
   const [canDelete, setCanDelete] = useState(false);
   const [deleted, setDeleted] = useState(false);
   const [fi, setFi] = useState(0);                 // selected finding
@@ -316,6 +319,7 @@ export default function Replay() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
+      if (askOpen) return;                                  // the Ask window handles its own keys
       if (view !== "board" || tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
       if (e.key === " ") {
         if (tag === "BUTTON" || tag === "A") return;      // a focused button / link handles its own space
@@ -419,6 +423,9 @@ export default function Replay() {
           </span>
           <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={copyLink}>
             <Link2 strokeWidth={1.75} aria-hidden /> {copied ? "Copied" : "Copy link"}
+          </button>
+          <button className="mc-btn mc-btn-outline mc-btn-sm" onClick={() => setAskOpen(true)} disabled={!rid} aria-haspopup="dialog">
+            <MessageCircleQuestion strokeWidth={1.75} aria-hidden /> Ask
           </button>
           {report && (
             <button className="mc-btn mc-btn-primary mc-btn-sm" onClick={() => setView("report")}>
@@ -549,6 +556,7 @@ export default function Replay() {
           </aside>
         </div>
       </div>
+      <AskWindow rid={rid} open={askOpen} onClose={closeAsk} onJump={jumpToSaid} />
     </ReplayContext.Provider>
   );
 }

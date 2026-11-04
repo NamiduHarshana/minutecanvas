@@ -97,7 +97,7 @@ export function Usage() {
             <span className="mc-tag mc-tag-plain">Wonder</span>
             <span>
               <b>Muse Wonder</b>
-              <span className="hint">Writes the report&rsquo;s summary and key takeaways after Stop.</span>
+              <span className="hint">Writes the report&rsquo;s summary and key takeaways after Stop, and answers questions about a meeting on its replay page.</span>
             </span>
           </div>
         </div>

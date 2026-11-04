@@ -18,6 +18,7 @@ import { CardModal } from "./CardModal";
 import { Sidebar } from "./Sidebar";
 import { Report } from "./Report";
 import { ExportSheet } from "./ExportSheet";
+import { AskWindow } from "./AskWindow";
 import { ChainStrip } from "./ChainStrip";
 import { FlowMap, FlowFocus } from "./FlowMap";
 import { AppShell } from "./AppShell";
@@ -43,6 +44,8 @@ export default function App() {
   const [needMic, setNeedMic] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
   const [stored, setStored] = useState<StoredSession | null>(null);
+  const [askOpen, setAskOpen] = useState(false);
+  const closeAsk = useCallback(() => setAskOpen(false), []);
   const [modal, setModal] = useState<{ id: string; edit: boolean } | null>(null);
   const [exporting, setExporting] = useState<"png" | "pdf" | null>(null);
   const [flowFocus, setFlowFocus] = useState<FlowFocus | null>(null);
@@ -331,7 +334,16 @@ export default function App() {
             ? { href: replayUrl(state.replayId), onCopy: copyReplay, onDelete: state.replayKey ? onDeleteReplay : null }
             : null
         }
+        onAsk={state.replayId ? () => setAskOpen(true) : null}
       />
+      {state.replayId && (
+        <AskWindow
+          rid={state.replayId}
+          open={askOpen}
+          onClose={closeAsk}
+          quoteHref={(t) => `${replayUrl(state.replayId!)}&t=${Math.max(0, Math.floor(t))}`}
+        />
+      )}
       <div className="work">
         <main className="stage" id="content">
           {state.serverState === "paused" && (
