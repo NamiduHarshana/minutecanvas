@@ -6,7 +6,7 @@ export const metadata: Metadata = {
   description: "What MinuteCanvas keeps, for how long, who processes it, and how to delete it.",
 };
 
-const UPDATED = "2 November 2026";
+const UPDATED = "4 November 2026";
 
 export default function Privacy() {
   const contact = SITE.contactEmail ? (
@@ -91,7 +91,7 @@ export default function Privacy() {
             <tr>
               <td>Server logs: request times, IP addresses, errors</td>
               <td>Keeping the service running and secure</td>
-              <td>Up to 30 days (Google Cloud Logging)</td>
+              <td>On our server only, in log files of a fixed size: the oldest lines are overwritten as new ones arrive</td>
             </tr>
           </tbody>
         </table>
@@ -134,7 +134,7 @@ export default function Privacy() {
             <b>Meta (Meta Model API):</b> transcription, the board, the Flow Map and the card pictures.
           </li>
           <li>
-            <b>Google Cloud (United States):</b> hosting, and storage of the replays and the signed-in meeting lists.
+            <b>Amazon Web Services (Sydney, Australia):</b> hosting, and storage of the replays and the signed-in meeting lists. Amazon CloudFront delivers the site to your browser.
           </li>
           <li>
             <b>Google sign-in:</b> only when you choose to sign in, on the Account page.

@@ -15,7 +15,70 @@ const FLOW_BOX = { w: 1120, h: 440 };
 const GRID_PER_PAGE = 6;
 const ROWS_PER_PAGE = 6;
 const OWNERS_PER_PAGE = 4;
-const TASKS_PER_OWNER = 6;
+
+// Next steps columns are filled by height, not by a fixed task count: 6 tasks with 2–3-line titles needed ~520–700 px
+// but a column has 410 px for its list, so the last tasks were cut off (also in the PDF). Sizes measured on the
+// 1280×720 slide: column top 168, column bottom at most 676 (slide padding 44), header + padding 80, bottom padding 18.
+const NEXT_LIST_H = 676 - 168 - 80 - 18;
+const TASK_BASE_H = 46; // task padding 24 + due line 21 (+1 rounding)
+const TASK_LINE_H = 22.1; // title 17px × line-height 1.3
+const TASK_GAP = 10;
+const TASK_FONT = `650 17px "Inter Variable", "Inter", system-ui, sans-serif`;
+
+/** Title text width in one Next steps column when the slide has `cols` columns (the grid shows at least 2). */
+function taskTextWidth(cols: number) {
+  const n = Math.max(cols, 2);
+  // slide content 1152, column gap 18; minus border 2, column padding 36, task padding 28, check 22 + gap 12
+  return (1152 - 18 * (n - 1)) / n - 2 - 36 - 28 - 22 - 12;
+}
+
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+/** Lines the title wraps to (greedy word wrap like the browser; long words break anywhere, as in the CSS). */
+function titleLines(text: string, width: number): number {
+  const w = width * 0.97; // small safety margin for rendering differences
+  if (measureCtx === undefined) measureCtx = typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
+  const ctx = measureCtx;
+  if (!ctx) return Math.max(1, Math.ceil((text.length * 9.6) / w));
+  ctx.font = TASK_FONT;
+  let lines = 1;
+  let line = "";
+  for (const word of text.trim().split(/\s+/)) {
+    const next = line ? `${line} ${word}` : word;
+    if (ctx.measureText(next).width <= w) {
+      line = next;
+      continue;
+    }
+    if (line) lines++;
+    line = "";
+    for (const ch of word) {
+      if (line && ctx.measureText(line + ch).width > w) {
+        lines++;
+        line = "";
+      }
+      line += ch;
+    }
+  }
+  return lines;
+}
+
+/** Split one owner's tasks into columns that fit the column height (a single task always gets a column). */
+function fitTasks(tasks: Card[], width: number): Card[][] {
+  const out: Card[][] = [];
+  let cur: Card[] = [];
+  let used = 0;
+  for (const t of tasks) {
+    const h = TASK_BASE_H + TASK_LINE_H * titleLines(t.title || "", width);
+    if (cur.length && used + TASK_GAP + h > NEXT_LIST_H) {
+      out.push(cur);
+      cur = [];
+      used = 0;
+    }
+    used += (cur.length ? TASK_GAP : 0) + h;
+    cur.push(t);
+  }
+  if (cur.length) out.push(cur);
+  return out;
+}
 
 type GridSection = { column: Column; title: string; cards: Card[] };
 export type Slide =
@@ -39,6 +102,7 @@ interface OwnerGroup {
   owner: string;
   tasks: Card[];
   cont: boolean; // continued from the previous column
+  total: number; // all of this owner's tasks (the first column says the total, not just its own share)
 }
 
 function chunk<T>(a: T[], n: number): T[][] {
@@ -91,7 +155,18 @@ export function buildSlides(r: Report): Slide[] {
     byOwner.set(k, [...(byOwner.get(k) || []), a]);
   }
   const owners = [...byOwner.entries()].sort((x, y) => (x[0] === "Unassigned" ? 1 : y[0] === "Unassigned" ? -1 : y[1].length - x[1].length));
-  const cols: OwnerGroup[] = owners.flatMap(([owner, tasks]) => chunk(tasks, TASKS_PER_OWNER).map((t, k) => ({ owner, tasks: t, cont: k > 0 })));
+  // the column width depends on how many columns the slide gets: use the widest layout whose columns all fit on one
+  // slide; more columns than that → several slides of at most OWNERS_PER_PAGE columns, sized for the narrowest
+  const split = (n: number): OwnerGroup[] =>
+    owners.flatMap(([owner, tasks]) => fitTasks(tasks, taskTextWidth(n)).map((t, k) => ({ owner, tasks: t, cont: k > 0, total: tasks.length })));
+  let cols = split(OWNERS_PER_PAGE);
+  for (let n = 2; n < OWNERS_PER_PAGE; n++) {
+    const c = split(n);
+    if (c.length <= n) {
+      cols = c;
+      break;
+    }
+  }
   // balanced pages (5 columns → 3 + 2, not 4 + 1)
   const nPages = Math.ceil(cols.length / OWNERS_PER_PAGE);
   const nextPages = chunk(cols, Math.ceil(cols.length / Math.max(1, nPages)));
@@ -318,7 +393,7 @@ function NextStepsSlide({ slide }: { slide: Extract<Slide, { kind: "next" }> }) 
                 <div>
                   <b>{g.owner}</b>
                   <span>
-                    {g.cont ? "continued" : `${g.tasks.length} ${g.tasks.length === 1 ? "task" : "tasks"}`}
+                    {g.cont ? "continued" : `${g.total} ${g.total === 1 ? "task" : "tasks"}`}
                     {un && !g.cont ? " · needs an owner" : ""}
                   </span>
                 </div>

@@ -20,7 +20,16 @@ export function Report({
   onNew: () => void;
   backLabel?: string;
 }) {
-  const slides = useMemo(() => buildSlides(report), [report]);
+  // Next steps columns are split by measured text width: measure again once the web fonts are in
+  const [fontsIn, setFontsIn] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    document.fonts?.ready.then(() => alive && setFontsIn(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const slides = useMemo(() => buildSlides(report), [report, fontsIn]); // eslint-disable-line react-hooks/exhaustive-deps
   const [i, setI] = useState(0);
   const [scale, setScale] = useState(0.5);
   const [exporting, setExporting] = useState<string | null>(null);
