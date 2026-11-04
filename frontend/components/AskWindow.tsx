@@ -2,6 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { LoaderCircle, Send, X } from "lucide-react";
 import { fmtTime } from "@/core/store";
+import { FindingTag } from "./kit";
 import { ReplayError, askReplay, type AskAnswer } from "@/core/replay";
 
 type QA = { id: number; q: string; a?: AskAnswer; err?: string };
@@ -112,7 +113,28 @@ export function AskWindow({
                         </button>
                       );
                     })}
-                    {x.a.by && <span className="qa-by">Answered by {x.a.by} · from the transcript only</span>}
+                    {x.a.findings.map((f) => {
+                      const body = (
+                        <>
+                          <span className="mc-time">{fmtTime(f.t)}</span>
+                          <span className="qa-find-body">
+                            <FindingTag kind={f.kind} small />
+                            <span>{f.text}</span>
+                            {f.step && <small>at “{f.step}”</small>}
+                          </span>
+                        </>
+                      );
+                      return quoteHref ? (
+                        <a key={f.id} className="mc-quote qa-find" href={quoteHref(f.t)} target="_blank" rel="noopener" title="Open the replay at this finding">
+                          {body}
+                        </a>
+                      ) : (
+                        <button key={f.id} className="mc-quote qa-find" onClick={() => (onClose(), onJump?.(f.t))} title="Play from this finding">
+                          {body}
+                        </button>
+                      );
+                    })}
+                    {x.a.by && <span className="qa-by">Answered by {x.a.by} · only from what this meeting said and found</span>}
                   </>
                 )}
               </div>

@@ -5,6 +5,9 @@ the meeting's own transcript and names the transcript lines it used. Like the Fl
 writes the quotes itself: it returns line ids, and the server keeps only ids that exist in this meeting and sends back
 the real line (time, speaker, words). An answer that claims the meeting covered something but cites no real line is
 turned into "not covered" — no evidence, no answer.
+v6.26: questions about what was MISSED ("gaps?", "what is still open?") have no transcript line by definition (a gap is
+what nobody said), so they always came back "not covered". The model may now also cite the gaps / conflicts / bugs
+MinuteCanvas found (by id); the server keeps only ids of this meeting's findings and sends back the real finding.
 
 Anyone with a replay link can ask, so every question costs Meta credits: limits per IP, per replay and server-wide
 (rolling 24 h, in memory = reset on backend restart). Nothing is stored: questions and answers are not saved.
@@ -25,6 +28,7 @@ log = logging.getLogger("minutecanvas.ask")
 
 MAX_LINES = 2500          # a 70-minute meeting has ~700 lines; longer logs keep the first 500 + the last 2000
 MAX_QUOTES = 4
+MAX_FINDINGS = 6          # findings cited in one answer
 CACHE_SIZE = 16           # parsed transcripts kept in memory (replays being asked about right now)
 NOT_COVERED = "The meeting didn't cover this."
 
@@ -56,8 +60,13 @@ def meeting_from_replay(raw: bytes) -> dict:
                           "text": clean_text(msg.get("text"), 4000)})
     if len(lines) > MAX_LINES:
         lines = lines[:500] + lines[-(MAX_LINES - 500):]
-    found = [{"kind": f.get("kind"), "text": clean_text(f.get("text"), 200), "step": clean_text(f.get("step"), 80)}
-             for f in (data.get("findings") or []) if isinstance(f, dict)]
+    found = []
+    for f in data.get("findings") or []:
+        if isinstance(f, dict) and f.get("id") and f.get("kind") in ("gap", "answered", "conflict", "bug"):
+            found.append({"id": clean_text(f.get("id"), 20), "kind": f["kind"], "text": clean_text(f.get("text"), 200),
+                          "step": clean_text(f.get("step"), 80), "answer": clean_text(f.get("answer"), 300),
+                          "settled": bool(f.get("settled")), "fixed": bool(f.get("fixed")),
+                          "t": float(f.get("t") or 0)})
     return {"title": clean_text(data.get("title"), 80), "lines": lines, "findings": found}
 
 
@@ -116,11 +125,12 @@ class Asker:
         m = await self.meeting(rid, store)
         if not m["lines"]:
             return {"answer": "Nobody spoke in this meeting, so there is nothing to answer from.", "covered": False,
-                    "quotes": [], "by": None}
+                    "quotes": [], "findings": [], "by": None}
         self._take(rid, ip)
         user = json.dumps({"meeting_title": m["title"], "question": question,
                            "transcript": [f"L{x['id']} [{fmt_t(x['t'])}] {x['speaker']}: {x['text']}" for x in m["lines"]],
-                           "findings": m["findings"]}, ensure_ascii=False)
+                           "findings": [{k: f[k] for k in ("id", "kind", "text", "step", "answer", "settled", "fixed")}
+                                        for f in m["findings"]]}, ensure_ascii=False)
         out, by = await self._request(user)
         by_id = {x["id"]: x for x in m["lines"]}
         ids: list[int] = []
@@ -132,11 +142,22 @@ class Asker:
             if i in by_id and i not in ids:
                 ids.append(i)
         ids = sorted(ids[:MAX_QUOTES], key=lambda i: by_id[i]["t"])
-        covered = bool(out.get("covered")) and bool(ids)
-        answer = clean_text(out.get("answer"), 700) if covered else NOT_COVERED
+        f_by_id = {f["id"]: f for f in m["findings"]}
+        fids: list[str] = []
+        for v in out.get("findings") if isinstance(out.get("findings"), list) else []:
+            v = str(v).strip()
+            if v in f_by_id and v not in fids:
+                fids.append(v)
+        fids = sorted(fids[:MAX_FINDINGS], key=lambda i: f_by_id[i]["t"])
+        covered = bool(out.get("covered")) and bool(ids or fids)
+        answer = clean_text(out.get("answer"), 700) if covered else ""
+        if not answer:
+            return {"answer": NOT_COVERED, "covered": False, "quotes": [], "findings": [], "by": by}
         quotes = [{"t": round(by_id[i]["t"], 1), "speaker": by_id[i]["speaker"], "text": clean_text(by_id[i]["text"], 400)}
-                  for i in ids] if covered else []
-        return {"answer": answer or NOT_COVERED, "covered": covered and bool(answer), "quotes": quotes, "by": by}
+                  for i in ids]
+        found = [{k: f_by_id[i][k] for k in ("id", "kind", "text", "step", "settled", "fixed")} | {"t": round(f_by_id[i]["t"], 1)}
+                 for i in fids]
+        return {"answer": answer, "covered": True, "quotes": quotes, "findings": found, "by": by}
 
     async def _request(self, user: str) -> tuple[dict, str]:
         """Muse Wonder first (short tries), then Muse Spark — the same pattern as the report summary."""

@@ -740,6 +740,9 @@ a.mc-quote { text-decoration: none; }
 .qa-none { color: var(--muted); }
 .qa-err { margin: 6px 0 0; font-size: 13.5px; line-height: 20px; color: var(--bug); }
 .qa-wait { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; }
+.qa-find { font-style: normal; }
+.qa-find-body { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; color: var(--ink); }
+.qa-find-body small { flex-basis: 100%; }
 .qa-by { margin-top: 8px; font-size: 12px; line-height: 16px; color: var(--muted); }
 .ask-form { display: flex; gap: 8px; align-items: center; }
 .ask-form .input { flex: 1 1 auto; min-width: 0; }

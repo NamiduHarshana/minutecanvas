@@ -31,7 +31,7 @@ def _replay_bytes() -> bytes:
         [20.0, {"type": "transcript_final", "id": 2, "speaker": "A", "text": "Card payment <b>only</b>.", "t": 18.0}],
     ]
     body = {"v": 1, "title": "FreshFold", "date": "2026-11-04", "duration_s": 30, "speakers": {"A": "Owner"},
-            "findings": [{"kind": "conflict", "text": "24 or 48 hours?", "step": "Deliver"}], "events": events}
+            "findings": [{"id": "c1", "kind": "conflict", "text": "24 or 48 hours?", "step": "Deliver", "t": 11.0}], "events": events}
     return gzip.compress(json.dumps(body).encode())
 
 
@@ -98,7 +98,7 @@ async def test_answer_uses_real_lines_only():
 async def test_no_evidence_no_answer(content):
     a = _asker(lambda req: _reply(content))
     out = await a.ask("r" * 22, _Store(_replay_bytes()), "What is the refund policy?", "1.2.3.4")
-    assert out == {"answer": NOT_COVERED, "covered": False, "quotes": [], "by": "Muse Wonder"}
+    assert out == {"answer": NOT_COVERED, "covered": False, "quotes": [], "findings": [], "by": "Muse Wonder"}   # v6.26: + findings
 
 
 async def test_wonder_down_falls_back_to_spark():

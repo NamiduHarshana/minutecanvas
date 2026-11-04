@@ -47,10 +47,21 @@ export interface AskQuote {
   speaker: string;
   text: string;
 }
+// v6.26: an answer about what was missed cites the findings MinuteCanvas made (checked by the server)
+export interface AskFinding {
+  id: string;
+  kind: import("./account").FindingKind;
+  text: string;
+  step: string | null;
+  t: number;
+  settled?: boolean;
+  fixed?: boolean;
+}
 export interface AskAnswer {
   answer: string;
   covered: boolean;
   quotes: AskQuote[];
+  findings: AskFinding[];
   by: string | null;
 }
 
@@ -72,7 +83,13 @@ export async function askReplay(id: string, question: string): Promise<AskAnswer
   if (res.status === 404) throw new ReplayError("This replay doesn't exist or was removed.");
   if (!res.ok) throw new ReplayError("Couldn't answer right now. Please try again.");
   const j = (await res.json()) as AskAnswer;
-  return { answer: String(j.answer || ""), covered: !!j.covered, quotes: Array.isArray(j.quotes) ? j.quotes : [], by: j.by ?? null };
+  return {
+    answer: String(j.answer || ""),
+    covered: !!j.covered,
+    quotes: Array.isArray(j.quotes) ? j.quotes : [],
+    findings: Array.isArray(j.findings) ? j.findings : [],
+    by: j.by ?? null,
+  };
 }
 
 /** State after the first `n` events, without highlights (a seek shouldn't flash every card). */
