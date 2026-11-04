@@ -1,6 +1,6 @@
 # MinuteCanvas backend
 
-FastAPI + WebSockets. Browser audio → **Muse Voice Transcribe** (live transcript, speaker labels) → **Muse Spark** every ~40 s (board cards as JSON) → **Muse Image** (card illustrations) → final report.
+FastAPI + WebSockets. Browser audio → **Muse Voice Transcribe** (live transcript, speaker labels) → **Muse Spark** every ~40 s (board cards as JSON) → **Muse Image** (card illustrations) → final report (summary + takeaways by **Muse Wonder**, Muse Spark as the fallback).
 
 ## Run locally
 

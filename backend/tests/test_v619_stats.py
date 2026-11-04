@@ -64,7 +64,7 @@ def test_findings_usage_counts():
     c1 = next(f for f in info["findings"] if f["id"] == "c1")
     assert c1["settled"] is False and len(c1["quotes"]) == 2 and c1["part"] == "Practice group"
     assert info["gaps"] == 1 and info["conflicts"] == 1 and info["bugs"] == 1 and info["answered"] == 1
-    assert info["usage"] == {"voice_s": 240.0, "spark_calls": 9, "tool_calls": 15, "images": 2}
+    assert info["usage"] == {"voice_s": 240.0, "spark_calls": 9, "tool_calls": 15, "images": 2, "wonder_calls": 0}
     json.dumps(info)                                       # stored as JSON
 
 

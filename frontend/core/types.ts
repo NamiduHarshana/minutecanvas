@@ -86,6 +86,7 @@ export interface Report {
   duration_s: number;
   summary: string;
   takeaways?: string[];             // newer backend
+  summary_by?: string | null;       // v6.24: model that wrote the summary + takeaways ("Muse Wonder", or "Muse Spark" as fallback)
   cover_image_url: string | null;
   speakers: Record<string, string>;
   goals: Card[];

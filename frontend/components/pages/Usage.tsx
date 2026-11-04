@@ -76,14 +76,14 @@ export function Usage() {
             <span className="mc-tag mc-tag-plain">Voice</span>
             <span>
               <b>Muse Voice Transcribe</b>
-              <span className="hint">Live transcript with speaker labels, streamed in 16 kHz audio.</span>
+              <span className="hint">Live transcript with speaker labels, streamed in 24 kHz audio.</span>
             </span>
           </div>
           <div className="model-row">
             <span className="mc-tag mc-tag-plain">Spark</span>
             <span>
               <b>Muse Spark</b>
-              <span className="hint">Tool-calling agent: draws the Flow Map, checks every quote, flags gaps, conflicts and bugs, writes the board and report.</span>
+              <span className="hint">Tool-calling agent: draws the Flow Map, checks every quote, flags gaps, conflicts and bugs, writes the board.</span>
             </span>
           </div>
           <div className="model-row">
@@ -91,6 +91,13 @@ export function Usage() {
             <span>
               <b>Muse Image</b>
               <span className="hint">One small illustration per board card.</span>
+            </span>
+          </div>
+          <div className="model-row">
+            <span className="mc-tag mc-tag-plain">Wonder</span>
+            <span>
+              <b>Muse Wonder</b>
+              <span className="hint">Writes the report&rsquo;s summary and key takeaways after Stop.</span>
             </span>
           </div>
         </div>

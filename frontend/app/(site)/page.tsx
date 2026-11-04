@@ -20,7 +20,7 @@ const FAQ: { q: string; a: React.ReactNode }[] = [
   },
   {
     q: "Which models does it use?",
-    a: "Muse Voice Transcribe for the transcript, Muse Spark for the board, the Flow Map, the findings and the report, and Muse Image for the card pictures.",
+    a: "Muse Voice Transcribe for the transcript, Muse Spark for the board, the Flow Map and the findings, Muse Image for the card pictures, and Muse Wonder for the report’s summary and key takeaways.",
   },
   {
     q: "What happens to my audio?",
@@ -140,7 +140,7 @@ export default function Landing() {
       <section className="sec tight" id="how" aria-labelledby="how-h">
         <span className="lab">How it works</span>
         <h2 id="how-h" className="mid sec-h">
-          Three models, one live canvas.
+          Four models, one live canvas.
         </h2>
         <div className="steps">
           <div className="feat">
@@ -156,7 +156,7 @@ export default function Landing() {
           <div className="feat">
             <span className="num">3</span>
             <h3>You leave with answers</h3>
-            <p>A report, a replay link and the open questions to ask next time. Muse Image illustrates each board card.</p>
+            <p>A report with a summary by Muse Wonder, a replay link and the open questions to ask next time. Muse Image illustrates each board card.</p>
           </div>
         </div>
       </section>

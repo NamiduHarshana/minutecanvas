@@ -409,6 +409,11 @@ export default function Replay() {
               <>
                 {" · "}Muse Spark <span className="mc-time c2">{usage.spark_calls} calls</span>
                 {" · "}Muse Image <span className="mc-time c2">{usage.images} pictures</span>
+                {!!usage.wonder_calls && (
+                  <span className="usage-wonder">
+                    {" · "}Muse Wonder <span className="mc-time c2">summary</span>
+                  </span>
+                )}
               </>
             )}
           </span>

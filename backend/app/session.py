@@ -109,6 +109,7 @@ class Session:
         self.spark_done_idx = 0
         self.spark_calls = 0
         self.spark_requests = 0          # every Muse Spark request (board, Flow agent turns, checks, report): Usage page
+        self.wonder_requests = 0         # v6.24: Muse Wonder requests (the report summary after Stop): Usage page
         self.spark_lock = asyncio.Lock()
         self.images: dict[str, tuple[bytes, str]] = {}
         self.images_made = 0
@@ -348,10 +349,10 @@ class Session:
 
     def usage_info(self) -> dict:
         """Meta model work for this meeting: transcribed seconds, Muse Spark requests, Flow tool calls checked
-        against the transcript (accepted + rejected), Muse Image pictures."""
+        against the transcript (accepted + rejected), Muse Image pictures, v6.24 Muse Wonder requests."""
         return {"voice_s": round(self.meeting_t, 1), "spark_calls": self.spark_requests,
                 "tool_calls": int(self.flow_stats["accepted"] + self.flow_stats["rejected"]),
-                "images": len(self.images)}
+                "images": len(self.images), "wonder_calls": self.wonder_requests}
 
     def findings(self) -> list[dict]:
         """Every gap, answered gap, conflict and bug of the Flow Map, oldest first, each with its checked quotes.
@@ -1266,19 +1267,17 @@ class Session:
         cards = [self.board.cards[i] for i in self.board.order if i in self.board.cards]
         summary = {"title": self.board.title or "Meeting notes", "summary": "", "image_prompt": ""}
         takeaways: list[str] = []
+        summary_by = None
         if self.transcript:
             full = [self._line(x) for x in self.transcript]
             if len(full) > 600:     # keep the request small for very long meetings
                 full = full[:100] + ["[...]"] + full[-500:]
             try:
-                self.spark_requests += 1
-                out = await self.meta.spark_json(
-                    SUMMARY_SYSTEM,
-                    json.dumps({"board": self.board.for_spark(), "transcript": full,
-                                "conflicts": [{"note": c.note, "a": c.a.quote, "b": c.b.quote}
-                                              for c in self.flow.contradictions.values() if not c.resolved]},
-                               ensure_ascii=False),
-                    "summary", SUMMARY_SCHEMA)
+                out, summary_by = await self._summary_request(json.dumps(
+                    {"board": self.board.for_spark(), "transcript": full,
+                     "conflicts": [{"note": c.note, "a": c.a.quote, "b": c.b.quote}
+                                   for c in self.flow.contradictions.values() if not c.resolved]},
+                    ensure_ascii=False))
                 # keep the title the board showed all meeting; the summary title is only a fallback
                 if not self.board.title:
                     summary["title"] = clean_text(out.get("title"), 80) or summary["title"]
@@ -1288,6 +1287,7 @@ class Session:
                 summary["image_prompt"] = clean_text(out.get("image_prompt"), 300)
             except Exception as e:  # noqa: BLE001
                 log.warning("summary failed: %s", e)
+                summary_by = None
         cover = None
         if summary["image_prompt"]:
             cover = await self._generate_image(summary["image_prompt"])   # 1 extra image, outside the card cap
@@ -1300,6 +1300,8 @@ class Session:
             "duration_s": round(self.meeting_t),
             "summary": summary["summary"],
             "takeaways": takeaways,
+            # v6.24: which model wrote the summary + takeaways (the report shows it); None = no summary
+            "summary_by": summary_by if (summary["summary"] or takeaways) else None,
             "cover_image_url": cover,
             "speakers": {k: self.speaker_name(k) for k in sorted({x["speaker"] for x in self.transcript})},
             "goals": [pub(c) for c in cards if c.column == "goals"],
@@ -1312,6 +1314,21 @@ class Session:
             "answered_questions": [pub(c) for c in cards if c.column == "questions" and c.resolved],
             "flow": self.flow.public(),
         }
+
+    async def _summary_request(self, user: str) -> tuple[dict, str]:
+        """v6.24: the summary goes to Muse Wonder (settings.report_model) first. Any failure (preview model, timeout,
+        HTTP error) falls back to Muse Spark, so the report never loses its summary. Returns (json, model name)."""
+        model = settings.report_model
+        if model and model != settings.spark_model:
+            try:
+                self.wonder_requests += 1
+                out = await self.meta.spark_json(SUMMARY_SYSTEM, user, "summary", SUMMARY_SCHEMA, model=model,
+                                                 attempts=2, timeout=settings.report_timeout_s)
+                return out, "Muse Wonder"
+            except Exception as e:  # noqa: BLE001
+                log.warning("summary with %s failed, using Muse Spark: %s", model, e)
+        self.spark_requests += 1
+        return await self.meta.spark_json(SUMMARY_SYSTEM, user, "summary", SUMMARY_SCHEMA), "Muse Spark"
 
     async def close(self):
         for t in self.tasks:

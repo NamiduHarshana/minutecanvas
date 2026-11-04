@@ -46,6 +46,11 @@ class Settings:
     voice_language: str = field(default_factory=lambda: _env("VOICE_LANGUAGE", "English"))
     spark_model: str = field(default_factory=lambda: _env("SPARK_MODEL", "muse-spark-1.3"))
     spark_reasoning: str = field(default_factory=lambda: _env("SPARK_REASONING", "low"))
+    # v6.24: the end-of-meeting summary + takeaways (one request after Stop) use Muse Wonder, Meta's most capable
+    # model (same request shape as Spark). If it fails, the summary falls back to Muse Spark. Empty = Spark only
+    report_model: str = field(default_factory=lambda: _env("REPORT_MODEL", "muse-wonder-1.0"))
+    # Muse Wonder gets this long per try (2 tries: the second only if it rejects reasoning_effort/strict)
+    report_timeout_s: float = field(default_factory=lambda: _float("REPORT_TIMEOUT_S", 60.0))
     image_model: str = field(default_factory=lambda: _env("IMAGE_MODEL", "muse-image-1.0"))
     image_reasoning: str = field(default_factory=lambda: _env("IMAGE_REASONING", "low"))
 

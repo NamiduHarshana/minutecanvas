@@ -49,6 +49,7 @@ export interface Usage {
   spark_calls: number;
   tool_calls: number;
   images: number;
+  wonder_calls?: number;   // v6.24 (older replays: missing)
 }
 export interface LocalMeeting extends MeetingRow {
   key: string;           // owner key: deletes the replay without signing in

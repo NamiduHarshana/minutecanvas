@@ -34,13 +34,14 @@ def _headers() -> dict:
 
 
 def build_spark_request(system: str, user: str, schema_name: str, schema: dict, extras: bool = True,
-                        history: list[dict] | None = None) -> dict:
+                        history: list[dict] | None = None, model: str | None = None) -> dict:
     """extras=False is exactly the body that passed the Oct 27 test.
     extras=True adds reasoning_effort (faster) + strict schema; dropped automatically on HTTP 400.
-    history: extra messages after the first user message (Flow agent JSON fallback retry turn)."""
+    history: extra messages after the first user message (Flow agent JSON fallback retry turn).
+    model: v6.24, another chat model with the same request shape (Muse Wonder for the report summary)."""
     js = {"name": schema_name, "schema": schema if extras else plain_schema(schema)}
     body = {
-        "model": settings.spark_model,
+        "model": model or settings.spark_model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}, *(history or [])],
         "response_format": {"type": "json_schema", "json_schema": js},
     }
@@ -156,12 +157,20 @@ class MetaClient:
         self.spark_extras = True     # becomes False if the API rejects reasoning_effort/strict
         self.tools_extras = True     # becomes False if the API rejects parallel_tool_calls/reasoning_effort
         self.tools_ok = True         # becomes False if the API rejects `tools` -> Flow agent uses JSON calls
+        # v6.24: the same flag for other models (Muse Wonder), kept apart so a 400 from one model never strips
+        # reasoning_effort / strict from every Muse Spark call of the meeting
+        self.model_extras: dict[str, bool] = {}
 
     async def aclose(self):
         await self.http.aclose()
 
     async def spark_json(self, system: str, user: str, schema_name: str, schema: dict,
-                         history: list[dict] | None = None) -> dict:
+                         history: list[dict] | None = None, model: str | None = None,
+                         attempts: int = 3, timeout: float | None = None) -> dict:
+        """model: None = Muse Spark; another id (v6.24 Muse Wonder) uses the same body and its own extras flag.
+        attempts / timeout: the report summary tries Muse Wonder briefly, then falls back to Muse Spark."""
+        if model == settings.spark_model:
+            model = None
         if settings.mock_meta:
             await _mock_wait()
             if schema_name == "flow_calls":
@@ -174,16 +183,22 @@ class MetaClient:
                 return {"yes": "already_answered" not in user, "why": "mock", "line": ""}
             return _mock_spark(user, schema_name)
         last = None
-        for attempt in range(3):
-            body = build_spark_request(system, user, schema_name, schema, self.spark_extras, history)
+        name = model or "spark"
+        for attempt in range(attempts):
+            extras = self.spark_extras if model is None else self.model_extras.get(model, True)
+            body = build_spark_request(system, user, schema_name, schema, extras, history, model)
             try:
-                r = await self.http.post(f"{settings.meta_api_base}/chat/completions", headers=_headers(), json=body)
-                if r.status_code == 400 and self.spark_extras:
-                    log.warning("spark rejected reasoning_effort/strict, using the tested body: %s", r.text[:300])
-                    self.spark_extras = False
+                kw = {"timeout": timeout} if timeout else {}
+                r = await self.http.post(f"{settings.meta_api_base}/chat/completions", headers=_headers(), json=body, **kw)
+                if r.status_code == 400 and extras:
+                    log.warning("%s rejected reasoning_effort/strict, using the tested body: %s", name, r.text[:300])
+                    if model is None:
+                        self.spark_extras = False
+                    else:
+                        self.model_extras[model] = False
                     continue
                 if r.status_code >= 400:
-                    raise MetaAPIError(f"spark HTTP {r.status_code}: {r.text[:300]}")
+                    raise MetaAPIError(f"{name} HTTP {r.status_code}: {r.text[:300]}")
                 data = r.json()
                 content = data["choices"][0]["message"]["content"]
                 if isinstance(content, list):  # some APIs return content parts
@@ -191,7 +206,7 @@ class MetaClient:
                 return json.loads(_strip_fence(content))
             except (MetaAPIError, httpx.HTTPError, KeyError, ValueError) as e:
                 last = e
-                log.warning("spark attempt %d failed: %s", attempt + 1, e)
+                log.warning("%s attempt %d failed: %s", name, attempt + 1, e)
         raise MetaAPIError(str(last))
 
     async def spark_tools(self, messages: list[dict], tools: list[dict]) -> dict:

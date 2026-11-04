@@ -29,7 +29,7 @@ const STEPS: { key: string; label: string }[] = [
   { key: "transcript", label: "Finishing the transcript" },
   { key: "cards", label: "Final pass with Muse Spark" },
   { key: "images", label: "Waiting for Muse Image illustrations" },
-  { key: "report", label: "Writing the report" },
+  { key: "report", label: "Writing the report with Muse Wonder" },
 ];
 
 export default function App() {

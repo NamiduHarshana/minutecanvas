@@ -292,7 +292,7 @@ function TakeawaysSlide({ report }: { report: Report }) {
   if (report.flow?.steps.length) stats.push(["gaps", "Gaps nobody covered", gaps.length]);
   return (
     <div className="slide">
-      <SlideHead title="Key takeaways" />
+      <SlideHead title="Key takeaways" sub={report.summary_by ? `Written by ${report.summary_by}` : undefined} />
       <div className="take-body">
         <div className="take-main" ref={mainRef} style={{ "--take-fs": `${TAKE_FS[fs]}px` } as React.CSSProperties}>
           {take.length ? (

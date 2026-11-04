@@ -76,6 +76,10 @@ export function Dashboard() {
               <i />
               Muse Image
             </span>
+            <span className="model">
+              <i />
+              Muse Wonder
+            </span>
           </div>
         </div>
       </section>

@@ -46,7 +46,9 @@ export default function Privacy() {
         </p>
         <p>
           The transcript is sent to Meta&rsquo;s Muse Spark model to build the board and the Flow Map, and short card descriptions are sent to Meta&rsquo;s
-          Muse Image model to draw the card pictures. Meta processes this data under the terms of the Meta Model API.
+          Muse Image model to draw the card pictures. After the meeting, the transcript and the board are sent to Meta&rsquo;s Muse Wonder model to write
+          the report&rsquo;s summary and key takeaways (or to Muse Spark if Muse Wonder is unavailable). Meta processes this data under the terms of the Meta
+          Model API.
         </p>
         <p>
           Before recording starts, the person running the meeting must confirm that everyone in the meeting knows it is being transcribed. The app gives them
